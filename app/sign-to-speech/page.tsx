@@ -5,7 +5,7 @@ import type React from "react"
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Camera, CameraOff, Volume2, RefreshCw } from "lucide-react"
+import { Camera, CameraOff, Volume2, RefreshCw, ToggleLeft, ToggleRight } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { HolisticDetection } from "@/lib/mediapipe-holistic"
 import Image from "next/image"
@@ -32,9 +32,10 @@ export default function SignToSpeechPage() {
   const [availableModels, setAvailableModels] = useState<{ id: string; name: string }[]>([])
   const [selectedModelId, setSelectedModelId] = useState<string>("")
   const [confidenceScore, setConfidenceScore] = useState<number>(0)
-  const [confidenceThreshold, setConfidenceThreshold] = useState<number>(0.55)
+  const [confidenceThreshold, setConfidenceThreshold] = useState<number>(0.3) // Lowered threshold
   const [lastPredictions, setLastPredictions] = useState<{ gesture: string; confidence: number }[]>([])
   const [debugMode, setDebugMode] = useState<boolean>(true)
+  const [continuousRecognition, setContinuousRecognition] = useState<boolean>(true) // Default to continuous
   const [debugInfo, setDebugInfo] = useState<{
     fps: number
     handDetected: boolean
@@ -52,6 +53,8 @@ export default function SignToSpeechPage() {
   const frameCountRef = useRef<number>(0)
   const lastFrameTimeRef = useRef<number>(Date.now())
   const cameraInitialized = useRef<boolean>(false)
+  const lastRecognitionTime = useRef<number>(0)
+  const recognitionCooldown = 1000 // 1 second cooldown between recognitions
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -213,7 +216,15 @@ export default function SignToSpeechPage() {
 
           if (loadedModel && (hasLeftHand || hasRightHand)) {
             const landmarks = extractLandmarks(results)
-            recognizeGesture(landmarks)
+
+            // If continuous recognition is enabled or we're manually processing
+            if (continuousRecognition || isProcessing) {
+              // Check if we're past the cooldown period
+              if (now - lastRecognitionTime.current >= recognitionCooldown) {
+                recognizeGesture(landmarks)
+                lastRecognitionTime.current = now
+              }
+            }
 
             // Update debug info about hand detection
             setDebugInfo((prev) => ({
@@ -353,95 +364,145 @@ export default function SignToSpeechPage() {
   const recognizeGesture = (currentLandmarks: any) => {
     if (!loadedModel || !currentLandmarks) return
 
-    // Simple implementation: compare the current landmarks with the stored landmarks
-    // and find the closest match based on Euclidean distance
-
+    // Improved implementation with better normalization and comparison
     const predictions: { gesture: string; confidence: number }[] = []
 
     // For each gesture in the model
     for (const gesture of loadedModel.gestures) {
-      let minDistance = Number.POSITIVE_INFINITY
+      let bestSimilarity = 0
+      let totalSamples = 0
 
       // Compare with each sample of this gesture
       for (let i = 0; i < gesture.landmarks.length; i += 30) {
         // Assuming 30 frames per sample
         const sampleLandmarks = gesture.landmarks.slice(i, i + 30)
+        if (sampleLandmarks.length === 0) continue
 
-        // Calculate distance between current landmarks and this sample
-        let distance = 0
-        let count = 0
+        // Find the middle frame as representative
+        const midFrameIndex = Math.floor(sampleLandmarks.length / 2)
+        const sampleFrame = sampleLandmarks[midFrameIndex]
+        if (!sampleFrame) continue
 
-        // Compare hand landmarks
-        if (currentLandmarks.rightHand.length > 0 && sampleLandmarks.some((s: any) => s.rightHand?.length > 0)) {
-          for (let j = 0; j < Math.min(currentLandmarks.rightHand.length, 21); j++) {
-            const current = currentLandmarks.rightHand[j]
+        // Calculate similarity between current landmarks and this sample
+        let similarity = 0
 
-            // Find the corresponding landmark in the sample
-            const sample = sampleLandmarks.find((s: any) => s.rightHand?.[j])?.rightHand?.[j]
-
-            if (current && sample) {
-              const d = Math.sqrt(
-                Math.pow(current.x - sample.x, 2) +
-                  Math.pow(current.y - sample.y, 2) +
-                  Math.pow((current.z || 0) - (sample.z || 0), 2),
-              )
-              distance += d
-              count++
-            }
-          }
+        // Check which hand to compare (prefer right hand if available)
+        if (currentLandmarks.rightHand.length > 0 && sampleFrame.rightHand?.length > 0) {
+          similarity = compareHandLandmarks(currentLandmarks.rightHand, sampleFrame.rightHand)
+        } else if (currentLandmarks.leftHand.length > 0 && sampleFrame.leftHand?.length > 0) {
+          similarity = compareHandLandmarks(currentLandmarks.leftHand, sampleFrame.leftHand)
         }
 
-        if (currentLandmarks.leftHand.length > 0 && sampleLandmarks.some((s: any) => s.leftHand?.length > 0)) {
-          for (let j = 0; j < Math.min(currentLandmarks.leftHand.length, 21); j++) {
-            const current = currentLandmarks.leftHand[j]
-
-            // Find the corresponding landmark in the sample
-            const sample = sampleLandmarks.find((s: any) => s.leftHand?.[j])?.leftHand?.[j]
-
-            if (current && sample) {
-              const d = Math.sqrt(
-                Math.pow(current.x - sample.x, 2) +
-                  Math.pow(current.y - sample.y, 2) +
-                  Math.pow((current.z || 0) - (sample.z || 0), 2),
-              )
-              distance += d
-              count++
-            }
-          }
+        if (similarity > bestSimilarity) {
+          bestSimilarity = similarity
         }
 
-        if (count > 0) {
-          distance /= count // Average distance
-          minDistance = Math.min(minDistance, distance)
-        }
+        totalSamples++
       }
 
-      // Convert distance to confidence (inverse relationship)
-      // Lower distance = higher confidence
-      const confidence = Math.max(0, 1 - minDistance * 5) // Scale factor can be adjusted
-
-      predictions.push({
-        gesture: gesture.name,
-        confidence: confidence,
-      })
+      // Only add prediction if we had valid samples to compare
+      if (totalSamples > 0) {
+        predictions.push({
+          gesture: gesture.name,
+          confidence: bestSimilarity,
+        })
+      }
     }
 
     // Sort by confidence (highest first)
     predictions.sort((a, b) => b.confidence - a.confidence)
 
-    // Update state with top predictions
+    // Update state with all predictions
     setLastPredictions(predictions)
 
     // If the top prediction has sufficient confidence, update the recognized text
     if (predictions.length > 0 && predictions[0].confidence > confidenceThreshold) {
-      setRecognizedText(predictions[0].gesture)
-      setConfidenceScore(predictions[0].confidence * 100)
-
-      // Speak the recognized text
+      // Only update and speak if it's a new gesture
       if (predictions[0].gesture !== recognizedText) {
+        setRecognizedText(predictions[0].gesture)
+        setConfidenceScore(predictions[0].confidence * 100)
         speakText(predictions[0].gesture)
+      } else {
+        // Just update the confidence if it's the same gesture
+        setConfidenceScore(predictions[0].confidence * 100)
       }
     }
+  }
+
+  // Compare hand landmarks and return similarity score (0-1)
+  const compareHandLandmarks = (currentHand: any[], sampleHand: any[]): number => {
+    if (!currentHand || !sampleHand || currentHand.length === 0 || sampleHand.length === 0) {
+      return 0
+    }
+
+    // Normalize the hand positions to be relative to the wrist (landmark 0)
+    const normalizeHand = (hand: any[]) => {
+      const wrist = hand[0]
+      return hand.map((point) => ({
+        x: point.x - wrist.x,
+        y: point.y - wrist.y,
+        z: (point.z || 0) - (wrist.z || 0),
+      }))
+    }
+
+    const normalizedCurrent = normalizeHand(currentHand)
+    const normalizedSample = normalizeHand(sampleHand)
+
+    // Calculate the scale factor based on hand size
+    const getHandSize = (hand: any[]) => {
+      let maxDist = 0
+      for (const point of hand) {
+        const dist = Math.sqrt(point.x * point.x + point.y * point.y + point.z * point.z)
+        if (dist > maxDist) maxDist = dist
+      }
+      return maxDist
+    }
+
+    const currentSize = getHandSize(normalizedCurrent)
+    const sampleSize = getHandSize(normalizedSample)
+
+    // Scale factor to normalize hand sizes
+    const scaleFactor = currentSize > 0 && sampleSize > 0 ? sampleSize / currentSize : 1
+
+    // Calculate similarity between normalized landmarks
+    let totalSimilarity = 0
+    let pointCount = 0
+
+    // Focus on fingertips (landmarks 4, 8, 12, 16, 20) and key joints
+    const keyPoints = [4, 8, 12, 16, 20, 5, 9, 13, 17] // Fingertips and first knuckles
+
+    for (const pointIdx of keyPoints) {
+      if (pointIdx < normalizedCurrent.length && pointIdx < normalizedSample.length) {
+        const currentPoint = normalizedCurrent[pointIdx]
+        const samplePoint = normalizedSample[pointIdx]
+
+        // Scale the current point
+        const scaledPoint = {
+          x: currentPoint.x * scaleFactor,
+          y: currentPoint.y * scaleFactor,
+          z: currentPoint.z * scaleFactor,
+        }
+
+        // Calculate Euclidean distance
+        const distance = Math.sqrt(
+          Math.pow(scaledPoint.x - samplePoint.x, 2) +
+            Math.pow(scaledPoint.y - samplePoint.y, 2) +
+            Math.pow(scaledPoint.z - samplePoint.z, 2),
+        )
+
+        // Convert distance to similarity (1 = identical, 0 = completely different)
+        // Adjust the scaling factor as needed
+        const similarity = Math.max(0, 1 - distance * 2)
+
+        // Weight fingertips more heavily
+        const weight = [4, 8, 12, 16, 20].includes(pointIdx) ? 1.5 : 1.0
+
+        totalSimilarity += similarity * weight
+        pointCount += weight
+      }
+    }
+
+    return pointCount > 0 ? totalSimilarity / pointCount : 0
   }
 
   // Process gesture recognition
@@ -473,7 +534,6 @@ export default function SignToSpeechPage() {
     }
 
     // The actual recognition happens continuously in the onResults callback
-    // This function just triggers a manual capture and processing
     setTimeout(() => {
       setIsProcessing(false)
     }, 1000)
@@ -499,6 +559,17 @@ export default function SignToSpeechPage() {
     const modelId = e.target.value
     setSelectedModelId(modelId)
     loadModel(modelId)
+  }
+
+  // Toggle continuous recognition
+  const toggleContinuousRecognition = () => {
+    setContinuousRecognition(!continuousRecognition)
+    toast({
+      title: continuousRecognition ? "Continuous Recognition Disabled" : "Continuous Recognition Enabled",
+      description: continuousRecognition
+        ? "You'll need to press the Recognize button manually"
+        : "Gestures will be recognized automatically",
+    })
   }
 
   // Check if MediaPipe is running and reinitialize if needed
@@ -588,7 +659,7 @@ export default function SignToSpeechPage() {
 
                   <Button
                     onClick={processGesture}
-                    disabled={!isCameraActive || isProcessing || !loadedModel}
+                    disabled={!isCameraActive || isProcessing || !loadedModel || continuousRecognition}
                     className="flex-1 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700"
                   >
                     {isProcessing ? (
@@ -636,6 +707,7 @@ export default function SignToSpeechPage() {
                     </p>
                   </div>
                 )}
+
                 <div className="w-full mt-4">
                   <div className="flex justify-between items-center mb-2">
                     <label htmlFor="confidence-threshold" className="block text-sm font-medium">
@@ -656,6 +728,28 @@ export default function SignToSpeechPage() {
                     <span>Less strict (10%)</span>
                     <span>More strict (90%)</span>
                   </div>
+                </div>
+
+                <div className="w-full mt-4 flex items-center justify-between">
+                  <span className="text-sm font-medium">Continuous Recognition:</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={toggleContinuousRecognition}
+                    className="flex items-center gap-2"
+                  >
+                    {continuousRecognition ? (
+                      <>
+                        <ToggleRight className="h-6 w-6 text-green-500" />
+                        <span className="text-green-500">ON</span>
+                      </>
+                    ) : (
+                      <>
+                        <ToggleLeft className="h-6 w-6 text-gray-500" />
+                        <span className="text-gray-500">OFF</span>
+                      </>
+                    )}
+                  </Button>
                 </div>
               </div>
             </CardContent>
@@ -831,6 +925,12 @@ export default function SignToSpeechPage() {
                     Detection:{" "}
                     <span className={debugInfo.fps > 0 ? "text-green-400" : "text-red-400"}>
                       {debugInfo.fps > 0 ? "RUNNING" : "STOPPED"}
+                    </span>
+                  </div>
+                  <div>
+                    Continuous:{" "}
+                    <span className={continuousRecognition ? "text-green-400" : "text-amber-400"}>
+                      {continuousRecognition ? "ON" : "OFF"}
                     </span>
                   </div>
                 </div>
