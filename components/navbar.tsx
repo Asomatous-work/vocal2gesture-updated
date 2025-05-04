@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Menu, X } from "lucide-react"
 import { motion } from "framer-motion"
 import { cn } from "@/lib/utils"
+import Image from "next/image"
 
 export function Navbar() {
   const [isOpen, setIsOpen] = useState(false)
@@ -24,9 +25,10 @@ export function Navbar() {
     { name: "Features", href: "/#features" },
     { name: "How It Works", href: "/#how-it-works" },
     { name: "Speech to Sign", href: "/#speech-to-sign" },
-    { name: "Sign to Speech", href: "/#sign-to-speech" },
+    { name: "Sign to Speech", href: "/sign-to-speech" },
     { name: "Training", href: "/training" },
     { name: "Upload", href: "/upload" },
+    { name: "Model Viewer", href: "/model-viewer" },
     { name: "Contact", href: "/#contact" },
   ]
 
@@ -44,9 +46,18 @@ export function Navbar() {
         <div className="flex items-center justify-between">
           <Link href="/" className="flex items-center space-x-2">
             <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ duration: 0.5 }}>
-              <span className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 text-transparent bg-clip-text">
-                Vocal2Gestures
-              </span>
+              <div className="flex items-center">
+                <Image
+                  src="/images/gesture-logo.png"
+                  alt="Vocal2Gestures Logo"
+                  width={30}
+                  height={30}
+                  className="mr-2"
+                />
+                <span className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 text-transparent bg-clip-text">
+                  Vocal2Gestures
+                </span>
+              </div>
             </motion.div>
           </Link>
 
