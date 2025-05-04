@@ -12,7 +12,6 @@ import { Slider } from "@/components/ui/slider"
 import { useToast } from "@/components/ui/use-toast"
 import { Camera, CameraOff, Save, Trash, Play, RefreshCw, Terminal } from "lucide-react"
 import { HolisticDetection } from "@/lib/mediapipe-holistic"
-import { upload } from "@vercel/blob/client"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { TrainingVisualization } from "./training-visualization"
 
@@ -439,28 +438,32 @@ export function GestureTrainer() {
         },
       }
 
-      // Convert to JSON string
-      const modelJson = JSON.stringify(modelData)
+      // Generate a unique model ID
+      const modelId = `gesture-model-${Date.now()}`
 
-      // Create a blob from the JSON string
-      const modelBlob = new Blob([modelJson], { type: "application/json" })
-      const file = new File([modelBlob], `gesture-model-${Date.now()}.json`, { type: "application/json" })
+      // Save to localStorage
+      localStorage.setItem(modelId, JSON.stringify(modelData))
 
-      // Upload to Vercel Blob
-      const { url } = await upload(file.name, file, {
-        access: "public",
-        handleUploadUrl: "/api/upload",
+      // Keep track of all saved models
+      const savedModels = JSON.parse(localStorage.getItem("savedGestureModels") || "[]")
+      savedModels.push({
+        id: modelId,
+        name: `Model ${savedModels.length + 1}`,
+        gestures: gestures.map((g) => g.name),
+        accuracy: modelAccuracy,
+        timestamp: new Date().toISOString(),
       })
+      localStorage.setItem("savedGestureModels", JSON.stringify(savedModels))
+
+      // Set as current model
+      localStorage.setItem("currentGestureModel", modelId)
 
       toast({
         title: "Model Saved",
-        description: "Your trained gesture model has been saved successfully.",
+        description: "Your trained gesture model has been saved successfully to local storage.",
       })
 
-      addLog("success", `Model saved successfully! URL: ${url}`)
-
-      // Store the model URL in localStorage for later use
-      localStorage.setItem("gestureModelUrl", url)
+      addLog("success", `Model saved successfully to local storage with ID: ${modelId}`)
     } catch (error) {
       console.error("Error saving model:", error)
       toast({
@@ -472,6 +475,31 @@ export function GestureTrainer() {
       addLog("error", `Failed to save model: ${error}`)
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  // Load a saved model from localStorage
+  const loadModel = (modelId: string) => {
+    try {
+      const modelData = localStorage.getItem(modelId)
+      if (!modelData) {
+        toast({
+          title: "Model Not Found",
+          description: "The requested model could not be found in local storage.",
+          variant: "destructive",
+        })
+        return null
+      }
+
+      return JSON.parse(modelData)
+    } catch (error) {
+      console.error("Error loading model:", error)
+      toast({
+        title: "Load Error",
+        description: "There was an error loading your model.",
+        variant: "destructive",
+      })
+      return null
     }
   }
 
@@ -884,7 +912,7 @@ export function GestureTrainer() {
                     ) : (
                       <>
                         <Save className="mr-2 h-4 w-4" />
-                        Save Model
+                        Save Locally
                       </>
                     )}
                   </Button>
