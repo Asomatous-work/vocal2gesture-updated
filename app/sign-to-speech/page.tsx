@@ -32,9 +32,9 @@ export default function SignToSpeechPage() {
   const [availableModels, setAvailableModels] = useState<{ id: string; name: string }[]>([])
   const [selectedModelId, setSelectedModelId] = useState<string>("")
   const [confidenceScore, setConfidenceScore] = useState<number>(0)
-  const [confidenceThreshold, setConfidenceThreshold] = useState<number>(0.6)
+  const [confidenceThreshold, setConfidenceThreshold] = useState<number>(0.55)
   const [lastPredictions, setLastPredictions] = useState<{ gesture: string; confidence: number }[]>([])
-  const [debugMode, setDebugMode] = useState<boolean>(false)
+  const [debugMode, setDebugMode] = useState<boolean>(true)
   const [debugInfo, setDebugInfo] = useState<{
     fps: number
     handDetected: boolean
@@ -51,6 +51,7 @@ export default function SignToSpeechPage() {
   const fpsInterval = useRef<NodeJS.Timeout | null>(null)
   const frameCountRef = useRef<number>(0)
   const lastFrameTimeRef = useRef<number>(Date.now())
+  const cameraInitialized = useRef<boolean>(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -138,6 +139,7 @@ export default function SignToSpeechPage() {
       }
 
       setIsCameraActive(false)
+      cameraInitialized.current = false
     } else {
       // Start the camera
       try {
@@ -170,7 +172,8 @@ export default function SignToSpeechPage() {
         })
 
         // Initialize holistic detection
-        initializeHolistic()
+        await initializeHolistic()
+        cameraInitialized.current = true
       } catch (error) {
         console.error("Error accessing camera:", error)
         toast({
@@ -184,57 +187,65 @@ export default function SignToSpeechPage() {
 
   // Initialize MediaPipe Holistic
   const initializeHolistic = async () => {
+    console.log("Initializing MediaPipe Holistic...")
+
     if (holisticRef.current) {
       holisticRef.current.stop()
     }
 
-    holisticRef.current = new HolisticDetection({
-      onResults: (results) => {
-        // Track frame time for FPS calculation
-        const now = Date.now()
-        const elapsed = now - lastFrameTimeRef.current
-        lastFrameTimeRef.current = now
-        frameCountRef.current++
-
-        // Start processing time measurement
-        const processStart = performance.now()
-
-        drawResults(results)
-
-        // Only process for gesture recognition if we have a loaded model
-        if (loadedModel && (results.leftHandLandmarks?.length > 0 || results.rightHandLandmarks?.length > 0)) {
-          const landmarks = extractLandmarks(results)
-          recognizeGesture(landmarks)
-
-          // Update debug info about hand detection
-          setDebugInfo((prev) => ({
-            ...prev,
-            handDetected: true,
-          }))
-        } else {
-          setDebugInfo((prev) => ({
-            ...prev,
-            handDetected: false,
-          }))
-        }
-
-        // End processing time measurement
-        const processEnd = performance.now()
-        setDebugInfo((prev) => ({
-          ...prev,
-          processingTime: processEnd - processStart,
-        }))
-      },
-      onError: (error) => {
-        console.error("MediaPipe Holistic error:", error)
-      },
-    })
-
     try {
+      holisticRef.current = new HolisticDetection({
+        onResults: (results) => {
+          // Track frame time for FPS calculation
+          const now = Date.now()
+          const elapsed = now - lastFrameTimeRef.current
+          lastFrameTimeRef.current = now
+          frameCountRef.current++
+
+          // Start processing time measurement
+          const processStart = performance.now()
+
+          drawResults(results)
+
+          // Only process for gesture recognition if we have a loaded model
+          const hasLeftHand = results.leftHandLandmarks && results.leftHandLandmarks.length > 0
+          const hasRightHand = results.rightHandLandmarks && results.rightHandLandmarks.length > 0
+
+          if (loadedModel && (hasLeftHand || hasRightHand)) {
+            const landmarks = extractLandmarks(results)
+            recognizeGesture(landmarks)
+
+            // Update debug info about hand detection
+            setDebugInfo((prev) => ({
+              ...prev,
+              handDetected: true,
+            }))
+          } else {
+            setDebugInfo((prev) => ({
+              ...prev,
+              handDetected: false,
+            }))
+          }
+
+          // End processing time measurement
+          const processEnd = performance.now()
+          setDebugInfo((prev) => ({
+            ...prev,
+            processingTime: processEnd - processStart,
+          }))
+        },
+        onError: (error) => {
+          console.error("MediaPipe Holistic error:", error)
+        },
+      })
+
       await holisticRef.current.initialize()
+      console.log("MediaPipe Holistic initialized successfully")
 
       if (videoRef.current && isCameraActive) {
+        console.log("Starting MediaPipe Holistic with video element")
         await holisticRef.current.start(videoRef.current)
+        console.log("MediaPipe Holistic started successfully")
 
         // Start FPS calculation interval
         if (fpsInterval.current) {
@@ -252,8 +263,16 @@ export default function SignToSpeechPage() {
           }))
         }, 1000)
       }
+
+      return true
     } catch (error) {
       console.error("Failed to initialize MediaPipe Holistic:", error)
+      toast({
+        title: "Detection Error",
+        description: "Failed to initialize hand detection. Please try restarting the camera.",
+        variant: "destructive",
+      })
+      return false
     }
   }
 
@@ -410,6 +429,9 @@ export default function SignToSpeechPage() {
     // Sort by confidence (highest first)
     predictions.sort((a, b) => b.confidence - a.confidence)
 
+    // Update state with top predictions
+    setLastPredictions(predictions)
+
     // If the top prediction has sufficient confidence, update the recognized text
     if (predictions.length > 0 && predictions[0].confidence > confidenceThreshold) {
       setRecognizedText(predictions[0].gesture)
@@ -423,7 +445,7 @@ export default function SignToSpeechPage() {
   }
 
   // Process gesture recognition
-  const processGesture = () => {
+  const processGesture = async () => {
     if (!isCameraActive) {
       toast({
         title: "Camera Inactive",
@@ -444,10 +466,14 @@ export default function SignToSpeechPage() {
 
     setIsProcessing(true)
 
+    // If MediaPipe isn't running, try to reinitialize it
+    if (debugInfo.fps === 0 && cameraInitialized.current) {
+      console.log("Attempting to reinitialize MediaPipe...")
+      await initializeHolistic()
+    }
+
     // The actual recognition happens continuously in the onResults callback
     // This function just triggers a manual capture and processing
-    // We don't need to stop the camera, just process the current frame
-
     setTimeout(() => {
       setIsProcessing(false)
     }, 1000)
@@ -474,6 +500,25 @@ export default function SignToSpeechPage() {
     setSelectedModelId(modelId)
     loadModel(modelId)
   }
+
+  // Check if MediaPipe is running and reinitialize if needed
+  useEffect(() => {
+    let checkInterval: NodeJS.Timeout
+
+    if (isCameraActive) {
+      checkInterval = setInterval(async () => {
+        // If FPS is 0 and camera is supposed to be active, try to reinitialize
+        if (debugInfo.fps === 0 && cameraInitialized.current) {
+          console.log("MediaPipe not running, attempting to reinitialize...")
+          await initializeHolistic()
+        }
+      }, 5000) // Check every 5 seconds
+    }
+
+    return () => {
+      if (checkInterval) clearInterval(checkInterval)
+    }
+  }, [isCameraActive, debugInfo.fps])
 
   // Clean up resources when component unmounts
   useEffect(() => {
@@ -519,6 +564,11 @@ export default function SignToSpeechPage() {
                   {!isCameraActive && (
                     <div className="absolute inset-0 flex items-center justify-center">
                       <p className="text-white">Camera is off</p>
+                    </div>
+                  )}
+                  {isCameraActive && debugInfo.fps === 0 && (
+                    <div className="absolute bottom-2 right-2 bg-red-500 text-white px-2 py-1 rounded text-xs">
+                      Detection not running
                     </div>
                   )}
                 </div>
@@ -640,7 +690,9 @@ export default function SignToSpeechPage() {
                   <p className="text-muted-foreground text-center">
                     {isProcessing
                       ? "Processing your gestures..."
-                      : "Recognized text will appear here after you make hand gestures"}
+                      : debugInfo.fps === 0 && isCameraActive
+                        ? "Hand detection not running. Try restarting the camera."
+                        : "Recognized text will appear here after you make hand gestures"}
                   </p>
                 )}
               </div>
@@ -728,7 +780,9 @@ export default function SignToSpeechPage() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="bg-gray-800 p-3 rounded-lg">
                   <div className="text-xs text-gray-400">FPS</div>
-                  <div className="text-xl font-mono">{debugInfo.fps}</div>
+                  <div className={`text-xl font-mono ${debugInfo.fps === 0 ? "text-red-400" : "text-green-400"}`}>
+                    {debugInfo.fps}
+                  </div>
                 </div>
                 <div className="bg-gray-800 p-3 rounded-lg">
                   <div className="text-xs text-gray-400">Hand Detected</div>
@@ -772,6 +826,12 @@ export default function SignToSpeechPage() {
                   </div>
                   <div>
                     Threshold: <span className="text-purple-400">{(confidenceThreshold * 100).toFixed(0)}%</span>
+                  </div>
+                  <div>
+                    Detection:{" "}
+                    <span className={debugInfo.fps > 0 ? "text-green-400" : "text-red-400"}>
+                      {debugInfo.fps > 0 ? "RUNNING" : "STOPPED"}
+                    </span>
                   </div>
                 </div>
               </div>
