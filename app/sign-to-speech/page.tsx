@@ -32,7 +32,25 @@ export default function SignToSpeechPage() {
   const [availableModels, setAvailableModels] = useState<{ id: string; name: string }[]>([])
   const [selectedModelId, setSelectedModelId] = useState<string>("")
   const [confidenceScore, setConfidenceScore] = useState<number>(0)
+  const [confidenceThreshold, setConfidenceThreshold] = useState<number>(0.6)
   const [lastPredictions, setLastPredictions] = useState<{ gesture: string; confidence: number }[]>([])
+  const [debugMode, setDebugMode] = useState<boolean>(false)
+  const [debugInfo, setDebugInfo] = useState<{
+    fps: number
+    handDetected: boolean
+    processingTime: number
+    lastFrameTime: number
+    frameCount: number
+  }>({
+    fps: 0,
+    handDetected: false,
+    processingTime: 0,
+    lastFrameTime: Date.now(),
+    frameCount: 0,
+  })
+  const fpsInterval = useRef<NodeJS.Timeout | null>(null)
+  const frameCountRef = useRef<number>(0)
+  const lastFrameTimeRef = useRef<number>(Date.now())
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -113,6 +131,12 @@ export default function SignToSpeechPage() {
         holisticRef.current.stop()
       }
 
+      // Clear FPS interval
+      if (fpsInterval.current) {
+        clearInterval(fpsInterval.current)
+        fpsInterval.current = null
+      }
+
       setIsCameraActive(false)
     } else {
       // Start the camera
@@ -166,13 +190,40 @@ export default function SignToSpeechPage() {
 
     holisticRef.current = new HolisticDetection({
       onResults: (results) => {
+        // Track frame time for FPS calculation
+        const now = Date.now()
+        const elapsed = now - lastFrameTimeRef.current
+        lastFrameTimeRef.current = now
+        frameCountRef.current++
+
+        // Start processing time measurement
+        const processStart = performance.now()
+
         drawResults(results)
 
         // Only process for gesture recognition if we have a loaded model
         if (loadedModel && (results.leftHandLandmarks?.length > 0 || results.rightHandLandmarks?.length > 0)) {
           const landmarks = extractLandmarks(results)
           recognizeGesture(landmarks)
+
+          // Update debug info about hand detection
+          setDebugInfo((prev) => ({
+            ...prev,
+            handDetected: true,
+          }))
+        } else {
+          setDebugInfo((prev) => ({
+            ...prev,
+            handDetected: false,
+          }))
         }
+
+        // End processing time measurement
+        const processEnd = performance.now()
+        setDebugInfo((prev) => ({
+          ...prev,
+          processingTime: processEnd - processStart,
+        }))
       },
       onError: (error) => {
         console.error("MediaPipe Holistic error:", error)
@@ -184,6 +235,22 @@ export default function SignToSpeechPage() {
 
       if (videoRef.current && isCameraActive) {
         await holisticRef.current.start(videoRef.current)
+
+        // Start FPS calculation interval
+        if (fpsInterval.current) {
+          clearInterval(fpsInterval.current)
+        }
+
+        fpsInterval.current = setInterval(() => {
+          const fps = frameCountRef.current
+          frameCountRef.current = 0
+
+          setDebugInfo((prev) => ({
+            ...prev,
+            fps,
+            frameCount: prev.frameCount + fps,
+          }))
+        }, 1000)
       }
     } catch (error) {
       console.error("Failed to initialize MediaPipe Holistic:", error)
@@ -343,11 +410,8 @@ export default function SignToSpeechPage() {
     // Sort by confidence (highest first)
     predictions.sort((a, b) => b.confidence - a.confidence)
 
-    // Update state with top predictions
-    setLastPredictions(predictions)
-
     // If the top prediction has sufficient confidence, update the recognized text
-    if (predictions.length > 0 && predictions[0].confidence > 0.6) {
+    if (predictions.length > 0 && predictions[0].confidence > confidenceThreshold) {
       setRecognizedText(predictions[0].gesture)
       setConfidenceScore(predictions[0].confidence * 100)
 
@@ -380,18 +444,9 @@ export default function SignToSpeechPage() {
 
     setIsProcessing(true)
 
-    // Capture current frame from video to canvas
-    if (videoRef.current && canvasRef.current) {
-      const context = canvasRef.current.getContext("2d")
-      if (context) {
-        canvasRef.current.width = videoRef.current.videoWidth
-        canvasRef.current.height = videoRef.current.videoHeight
-        context.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height)
-      }
-    }
-
     // The actual recognition happens continuously in the onResults callback
     // This function just triggers a manual capture and processing
+    // We don't need to stop the camera, just process the current frame
 
     setTimeout(() => {
       setIsProcessing(false)
@@ -419,6 +474,23 @@ export default function SignToSpeechPage() {
     setSelectedModelId(modelId)
     loadModel(modelId)
   }
+
+  // Clean up resources when component unmounts
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop())
+      }
+
+      if (holisticRef.current) {
+        holisticRef.current.stop()
+      }
+
+      if (fpsInterval.current) {
+        clearInterval(fpsInterval.current)
+      }
+    }
+  }, [])
 
   return (
     <div className="container mx-auto px-4 py-12">
@@ -514,6 +586,27 @@ export default function SignToSpeechPage() {
                     </p>
                   </div>
                 )}
+                <div className="w-full mt-4">
+                  <div className="flex justify-between items-center mb-2">
+                    <label htmlFor="confidence-threshold" className="block text-sm font-medium">
+                      Confidence Threshold: {(confidenceThreshold * 100).toFixed(0)}%
+                    </label>
+                  </div>
+                  <input
+                    id="confidence-threshold"
+                    type="range"
+                    min="0.1"
+                    max="0.9"
+                    step="0.05"
+                    value={confidenceThreshold}
+                    onChange={(e) => setConfidenceThreshold(Number.parseFloat(e.target.value))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                    <span>Less strict (10%)</span>
+                    <span>More strict (90%)</span>
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -619,6 +712,80 @@ export default function SignToSpeechPage() {
             </div>
           </div>
         </div>
+      </div>
+      {/* Debug Panel */}
+      <div className="mt-8">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-bold">Debug Panel</h2>
+          <Button variant="outline" size="sm" onClick={() => setDebugMode(!debugMode)}>
+            {debugMode ? "Hide Details" : "Show Details"}
+          </Button>
+        </div>
+
+        {debugMode && (
+          <Card className="overflow-hidden border-none shadow-lg bg-gray-900 text-white">
+            <CardContent className="p-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-gray-800 p-3 rounded-lg">
+                  <div className="text-xs text-gray-400">FPS</div>
+                  <div className="text-xl font-mono">{debugInfo.fps}</div>
+                </div>
+                <div className="bg-gray-800 p-3 rounded-lg">
+                  <div className="text-xs text-gray-400">Hand Detected</div>
+                  <div className={`text-xl font-mono ${debugInfo.handDetected ? "text-green-400" : "text-red-400"}`}>
+                    {debugInfo.handDetected ? "YES" : "NO"}
+                  </div>
+                </div>
+                <div className="bg-gray-800 p-3 rounded-lg">
+                  <div className="text-xs text-gray-400">Processing Time</div>
+                  <div className="text-xl font-mono">{debugInfo.processingTime.toFixed(2)} ms</div>
+                </div>
+                <div className="bg-gray-800 p-3 rounded-lg">
+                  <div className="text-xs text-gray-400">Total Frames</div>
+                  <div className="text-xl font-mono">{debugInfo.frameCount}</div>
+                </div>
+              </div>
+
+              <div className="mt-4 bg-gray-800 p-3 rounded-lg">
+                <div className="text-xs text-gray-400 mb-2">Recognition Status</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    Camera Active:{" "}
+                    <span className={isCameraActive ? "text-green-400" : "text-red-400"}>
+                      {isCameraActive ? "YES" : "NO"}
+                    </span>
+                  </div>
+                  <div>
+                    Processing:{" "}
+                    <span className={isProcessing ? "text-amber-400" : "text-green-400"}>
+                      {isProcessing ? "YES" : "NO"}
+                    </span>
+                  </div>
+                  <div>
+                    Model Loaded:{" "}
+                    <span className={loadedModel ? "text-green-400" : "text-red-400"}>
+                      {loadedModel ? "YES" : "NO"}
+                    </span>
+                  </div>
+                  <div>
+                    Gestures: <span className="text-blue-400">{loadedModel ? loadedModel.gestures.length : 0}</span>
+                  </div>
+                  <div>
+                    Threshold: <span className="text-purple-400">{(confidenceThreshold * 100).toFixed(0)}%</span>
+                  </div>
+                </div>
+              </div>
+
+              {recognizedText && (
+                <div className="mt-4 bg-gray-800 p-3 rounded-lg">
+                  <div className="text-xs text-gray-400 mb-2">Last Recognition</div>
+                  <div className="text-lg font-bold">{recognizedText}</div>
+                  <div className="text-sm">Confidence: {confidenceScore.toFixed(1)}%</div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   )
