@@ -63,6 +63,7 @@
     "@vercel/blob": "latest",
     "@mediapipe/holistic": "latest",
     "@mediapipe/camera_utils": "latest",
+    "@tensorflow/tfjs": "latest",
     "@octokit/rest": "latest"
   },
   "devDependencies": {

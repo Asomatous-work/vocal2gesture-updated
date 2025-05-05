@@ -1,4 +1,5 @@
 import { Octokit } from "@octokit/rest"
+import type { LSTMGestureModel } from "./lstm-gesture-model"
 
 // Define types for our models
 export interface HandLandmark {
@@ -31,6 +32,7 @@ export interface ModelMetadata {
   version: string
   lastUpdated: string
   description?: string
+  usesLSTM?: boolean
 }
 
 export interface GestureModel {
@@ -43,6 +45,7 @@ export interface ConsolidatedModel {
   gestureFiles: Record<string, GestureData> // Gesture name -> GestureData
   version: string
   lastUpdated: string
+  lstmModelData?: any // LSTM model data if available
 }
 
 // GitHub configuration
@@ -57,6 +60,7 @@ export class ModelManager {
   private consolidatedModel: ConsolidatedModel | null = null
   private octokit: Octokit | null = null
   private githubConfig: GitHubConfig | null = null
+  private lstmModel: LSTMGestureModel | null = null
 
   constructor() {
     // Initialize by loading from localStorage
@@ -86,6 +90,11 @@ export class ModelManager {
       console.error("Failed to initialize GitHub:", error)
       return false
     }
+  }
+
+  // Set LSTM model reference
+  public setLSTMModel(model: LSTMGestureModel): void {
+    this.lstmModel = model
   }
 
   // Consolidate all existing models into one
@@ -189,6 +198,13 @@ export class ModelManager {
         consolidatedModel.model.metadata.epochs = Math.round(totalEpochs / totalModels)
       }
 
+      // Check if we have LSTM model data to include
+      const lstmModelData = localStorage.getItem("lstm_model_data")
+      if (lstmModelData) {
+        consolidatedModel.lstmModelData = JSON.parse(lstmModelData)
+        consolidatedModel.model.metadata.usesLSTM = true
+      }
+
       // Save the consolidated model
       this.consolidatedModel = consolidatedModel
       this.saveToLocalStorage()
@@ -220,8 +236,14 @@ export class ModelManager {
           version: this.consolidatedModel.version,
           lastUpdated: this.consolidatedModel.lastUpdated,
           gestureCount: Object.keys(this.consolidatedModel.gestureFiles).length,
+          usesLSTM: this.consolidatedModel.model.metadata.usesLSTM || false,
         }),
       )
+
+      // Save LSTM model data if available
+      if (this.consolidatedModel.lstmModelData) {
+        localStorage.setItem("lstm_model_data", JSON.stringify(this.consolidatedModel.lstmModelData))
+      }
 
       console.log("Consolidated model saved to localStorage")
     } catch (error) {
@@ -257,11 +279,15 @@ export class ModelManager {
             lastUpdated: new Date().toISOString(),
           }
 
+      // Load LSTM model data if available
+      const lstmModelData = localStorage.getItem("lstm_model_data")
+
       this.consolidatedModel = {
         model,
         gestureFiles,
         version: metadata.version,
         lastUpdated: metadata.lastUpdated,
+        lstmModelData: lstmModelData ? JSON.parse(lstmModelData) : undefined,
       }
 
       console.log("Consolidated model loaded from localStorage")
@@ -321,6 +347,27 @@ export class ModelManager {
     }
   }
 
+  // Save LSTM model data
+  public saveLSTMModelData(modelData: any): boolean {
+    try {
+      if (!this.consolidatedModel) {
+        this.consolidateModels()
+      }
+
+      if (this.consolidatedModel) {
+        this.consolidatedModel.lstmModelData = modelData
+        this.consolidatedModel.model.metadata.usesLSTM = true
+        this.saveToLocalStorage()
+        return true
+      }
+
+      return false
+    } catch (error) {
+      console.error("Error saving LSTM model data:", error)
+      return false
+    }
+  }
+
   // Get the consolidated model
   public getConsolidatedModel(): GestureModel | null {
     return this.consolidatedModel?.model || null
@@ -334,6 +381,11 @@ export class ModelManager {
   // Get all gestures
   public getAllGestures(): GestureData[] {
     return this.consolidatedModel?.model.gestures || []
+  }
+
+  // Get LSTM model data
+  public getLSTMModelData(): any | null {
+    return this.consolidatedModel?.lstmModelData || null
   }
 
   // Save to GitHub
@@ -390,6 +442,7 @@ export class ModelManager {
               version: this.consolidatedModel.version,
               lastUpdated: this.consolidatedModel.lastUpdated,
               gestureCount: Object.keys(this.consolidatedModel.gestureFiles).length,
+              usesLSTM: this.consolidatedModel.model.metadata.usesLSTM || false,
             },
             null,
             2,
@@ -397,6 +450,18 @@ export class ModelManager {
         ).toString("base64"),
         branch,
       })
+
+      // Save LSTM model data if available
+      if (this.consolidatedModel.lstmModelData) {
+        await this.octokit.repos.createOrUpdateFileContents({
+          owner,
+          repo,
+          path: "models/lstm_model_data.json",
+          message: "Update LSTM model data",
+          content: Buffer.from(JSON.stringify(this.consolidatedModel.lstmModelData, null, 2)).toString("base64"),
+          branch,
+        })
+      }
 
       console.log("Model saved to GitHub successfully")
       return true
@@ -475,6 +540,28 @@ export class ModelManager {
           // Use the gesture data from the main model as fallback
           this.consolidatedModel.gestureFiles[gesture.name] = gesture
         }
+      }
+
+      // Try to load LSTM model data if available
+      try {
+        const { data: lstmModelData } = await this.octokit.repos.getContent({
+          owner,
+          repo,
+          path: "models/lstm_model_data.json",
+          ref: branch,
+        })
+
+        if ("content" in lstmModelData) {
+          const lstmContent = Buffer.from(lstmModelData.content, "base64").toString()
+          this.consolidatedModel.lstmModelData = JSON.parse(lstmContent)
+
+          // If we have an LSTM model instance, import the data
+          if (this.lstmModel && this.consolidatedModel.lstmModelData) {
+            await this.lstmModel.importFromGitHub(this.consolidatedModel.lstmModelData)
+          }
+        }
+      } catch (error) {
+        console.warn("LSTM model data not found or could not be loaded:", error)
       }
 
       // Save to localStorage for offline use

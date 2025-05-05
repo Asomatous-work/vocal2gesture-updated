@@ -1,17 +1,21 @@
 "use client"
 
-import type React from "react"
-
 import { useState, useEffect, useRef } from "react"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { Camera, CameraOff, Volume2, RefreshCw, ToggleLeft, ToggleRight, MessageSquare, History } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { HolisticDetection } from "@/lib/mediapipe-holistic"
-import Image from "next/image"
+import { LSTMGestureModel } from "@/lib/lstm-gesture-model"
+import { modelManager } from "@/lib/model-manager"
+import * as tf from "@tensorflow/tfjs"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { PhraseManager, type Phrase } from "@/components/phrase-manager"
-import Link from "next/link"
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
+import { Slider } from "@/components/ui/slider"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Camera, CameraOff, RefreshCw, Github, Brain, Settings, History } from "lucide-react"
+import Image from "next/image"
+import { motion } from "framer-motion"
 
 interface GestureModel {
   gestures: {
@@ -27,18 +31,25 @@ interface GestureModel {
   }
 }
 
+interface Phrase {
+  id: string
+  name: string
+  gestures: string[]
+  translation: string
+}
+
 export default function SignToSpeechPage() {
   const [isCameraActive, setIsCameraActive] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [recognizedText, setRecognizedText] = useState("")
   const [loadedModel, setLoadedModel] = useState<GestureModel | null>(null)
-  const [availableModels, setAvailableModels] = useState<{ id: string; name: string }[]>([])
+  const [availableModels, setAvailableModels] = useState<{ id: string; name: string; timestamp: string }[]>([])
   const [selectedModelId, setSelectedModelId] = useState<string>("")
   const [confidenceScore, setConfidenceScore] = useState<number>(0)
-  const [confidenceThreshold, setConfidenceThreshold] = useState<number>(0.25) // Even lower threshold
+  const [confidenceThreshold, setConfidenceThreshold] = useState<number>(0.25)
   const [lastPredictions, setLastPredictions] = useState<{ gesture: string; confidence: number }[]>([])
   const [debugMode, setDebugMode] = useState<boolean>(true)
-  const [continuousRecognition, setContinuousRecognition] = useState<boolean>(true) // Default to continuous
+  const [continuousRecognition, setContinuousRecognition] = useState<boolean>(true)
   const [debugInfo, setDebugInfo] = useState<{
     fps: number
     handDetected: boolean
@@ -55,6 +66,13 @@ export default function SignToSpeechPage() {
     lastGesture: "",
   })
   const [currentDetection, setCurrentDetection] = useState<string>("")
+  const [useLSTM, setUseLSTM] = useState<boolean>(true)
+  const [isLSTMLoaded, setIsLSTMLoaded] = useState<boolean>(false)
+  const [isLoadingFromGitHub, setIsLoadingFromGitHub] = useState<boolean>(false)
+  const [recognitionDelay, setRecognitionDelay] = useState<number>(500)
+  const [detectionHistory, setDetectionHistory] = useState<
+    { gesture: string; confidence: number; timestamp: number }[]
+  >([])
 
   // Phrase detection states
   const [phrases, setPhrases] = useState<Phrase[]>([])
@@ -68,12 +86,13 @@ export default function SignToSpeechPage() {
   const lastFrameTimeRef = useRef<number>(Date.now())
   const cameraInitialized = useRef<boolean>(false)
   const lastRecognitionTime = useRef<number>(0)
-  const recognitionCooldown = 500 // 0.5 second cooldown between recognitions
   const gestureHistory = useRef<{ gesture: string; timestamp: number }[]>([])
   const stableGestureCount = useRef<{ [key: string]: number }>({})
   const lastRecognizedGesture = useRef<string>("")
   const phraseInProgressRef = useRef<boolean>(false)
   const phraseTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const lstmModelRef = useRef<LSTMGestureModel | null>(null)
+  const landmarksBufferRef = useRef<any[]>([])
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -81,33 +100,94 @@ export default function SignToSpeechPage() {
   const holisticRef = useRef<HolisticDetection | null>(null)
   const { toast } = useToast()
 
-  // Load available models and phrases from localStorage
+  // Initialize TensorFlow.js and load LSTM model
   useEffect(() => {
-    const loadSavedModels = () => {
-      try {
-        const savedModels = JSON.parse(localStorage.getItem("savedGestureModels") || "[]")
-        setAvailableModels(savedModels)
+    const initTF = async () => {
+      if (useLSTM) {
+        try {
+          await tf.ready()
+          console.log("TensorFlow.js initialized")
 
-        // Set the current model as selected if available
-        const currentModelId = localStorage.getItem("currentGestureModel")
-        if (currentModelId) {
-          setSelectedModelId(currentModelId)
-          loadModel(currentModelId)
-        } else if (savedModels.length > 0) {
-          setSelectedModelId(savedModels[0].id)
-          loadModel(savedModels[0].id)
+          // Try to load existing LSTM model
+          const savedModels = JSON.parse(localStorage.getItem("savedLSTMModels") || "[]")
+          if (savedModels.length > 0) {
+            const latestModel = savedModels[savedModels.length - 1]
+
+            try {
+              // Create LSTM model instance
+              const config = {
+                sequenceLength: 30,
+                numFeatures: 63,
+                numClasses: 0,
+                hiddenUnits: 64,
+                learningRate: 0.001,
+              }
+
+              lstmModelRef.current = new LSTMGestureModel(config)
+              const loaded = await lstmModelRef.current.loadFromLocalStorage(latestModel.id)
+
+              if (loaded) {
+                console.log("LSTM model loaded successfully")
+                setIsLSTMLoaded(true)
+                toast({
+                  title: "LSTM Model Loaded",
+                  description: `Loaded model: ${latestModel.name}`,
+                })
+              } else {
+                console.warn("Failed to load LSTM model")
+                setIsLSTMLoaded(false)
+              }
+            } catch (error) {
+              console.error("Error loading LSTM model:", error)
+              setIsLSTMLoaded(false)
+            }
+          } else {
+            console.log("No saved LSTM models found")
+            setIsLSTMLoaded(false)
+          }
+        } catch (error) {
+          console.error("Error initializing TensorFlow.js:", error)
+          setUseLSTM(false)
         }
-
-        // Load saved phrases
-        const savedPhrases = JSON.parse(localStorage.getItem("savedGesturePhrases") || "[]")
-        setPhrases(savedPhrases)
-      } catch (error) {
-        console.error("Error loading saved models or phrases:", error)
       }
     }
 
+    initTF()
+
+    // Load available models from localStorage
     loadSavedModels()
-  }, [])
+
+    // Load saved phrases
+    const savedPhrases = JSON.parse(localStorage.getItem("savedGesturePhrases") || "[]")
+    setPhrases(savedPhrases)
+
+    return () => {
+      // Clean up TensorFlow resources
+      if (lstmModelRef.current) {
+        lstmModelRef.current.dispose()
+      }
+    }
+  }, [toast])
+
+  // Load available models from localStorage
+  const loadSavedModels = () => {
+    try {
+      const savedModels = JSON.parse(localStorage.getItem("savedGestureModels") || "[]")
+      setAvailableModels(savedModels)
+
+      // Set the current model as selected if available
+      const currentModelId = localStorage.getItem("currentGestureModel")
+      if (currentModelId) {
+        setSelectedModelId(currentModelId)
+        loadModel(currentModelId)
+      } else if (savedModels.length > 0) {
+        setSelectedModelId(savedModels[0].id)
+        loadModel(savedModels[0].id)
+      }
+    } catch (error) {
+      console.error("Error loading saved models:", error)
+    }
+  }
 
   // Load a specific model from localStorage
   const loadModel = (modelId: string) => {
@@ -129,12 +209,6 @@ export default function SignToSpeechPage() {
         title: "Model Loaded",
         description: `Loaded model with ${model.gestures.length} gestures.`,
       })
-
-      // Log the loaded gestures
-      console.log(
-        "Loaded gestures:",
-        model.gestures.map((g) => g.name),
-      )
     } catch (error) {
       console.error("Error loading model:", error)
       toast({
@@ -205,6 +279,7 @@ export default function SignToSpeechPage() {
         gestureHistory.current = []
         stableGestureCount.current = {}
         setRecognizedGestures([])
+        landmarksBufferRef.current = []
       } catch (error) {
         console.error("Error accessing camera:", error)
         toast({
@@ -233,45 +308,50 @@ export default function SignToSpeechPage() {
           lastFrameTimeRef.current = now
           frameCountRef.current++
 
-          // Start processing time measurement
-          const processStart = performance.now()
+          // Update debug info
+          setDebugInfo((prev) => ({
+            ...prev,
+            handDetected:
+              (results.leftHandLandmarks && results.leftHandLandmarks.length > 0) ||
+              (results.rightHandLandmarks && results.rightHandLandmarks.length > 0),
+            lastFrameTime: now,
+            frameCount: frameCountRef.current,
+          }))
 
           drawResults(results)
 
-          // Only process for gesture recognition if we have a loaded model
-          const hasLeftHand = results.leftHandLandmarks && results.leftHandLandmarks.length > 0
-          const hasRightHand = results.rightHandLandmarks && results.rightHandLandmarks.length > 0
+          // Extract landmarks for recognition
+          const landmarks = extractLandmarks(results)
+          const hasHands =
+            (results.leftHandLandmarks && results.leftHandLandmarks.length > 0) ||
+            (results.rightHandLandmarks && results.rightHandLandmarks.length > 0)
 
-          if (loadedModel && (hasLeftHand || hasRightHand)) {
-            const landmarks = extractLandmarks(results)
+          if (hasHands) {
+            // Add to landmarks buffer for LSTM
+            if (useLSTM) {
+              landmarksBufferRef.current.push(landmarks)
 
-            // If continuous recognition is enabled or we're manually processing
-            if (continuousRecognition || isProcessing) {
-              // Check if we're past the cooldown period
-              if (now - lastRecognitionTime.current >= recognitionCooldown) {
+              // Keep only the most recent frames
+              if (landmarksBufferRef.current.length > 30) {
+                landmarksBufferRef.current.shift()
+              }
+
+              // If we have enough frames and continuous recognition is enabled
+              if (landmarksBufferRef.current.length >= 30 && continuousRecognition && isLSTMLoaded) {
+                // Check if we're past the cooldown period
+                if (now - lastRecognitionTime.current >= recognitionDelay) {
+                  recognizeGestureWithLSTM(landmarksBufferRef.current)
+                  lastRecognitionTime.current = now
+                }
+              }
+            } else if (loadedModel && continuousRecognition) {
+              // Use traditional recognition
+              if (now - lastRecognitionTime.current >= recognitionDelay) {
                 recognizeGesture(landmarks)
                 lastRecognitionTime.current = now
               }
             }
-
-            // Update debug info about hand detection
-            setDebugInfo((prev) => ({
-              ...prev,
-              handDetected: true,
-            }))
-          } else {
-            setDebugInfo((prev) => ({
-              ...prev,
-              handDetected: false,
-            }))
           }
-
-          // End processing time measurement
-          const processEnd = performance.now()
-          setDebugInfo((prev) => ({
-            ...prev,
-            processingTime: processEnd - processStart,
-          }))
         },
         onError: (error) => {
           console.error("MediaPipe Holistic error:", error)
@@ -292,14 +372,16 @@ export default function SignToSpeechPage() {
         }
 
         fpsInterval.current = setInterval(() => {
-          const fps = frameCountRef.current
-          frameCountRef.current = 0
+          const now = Date.now()
+          const elapsed = now - debugInfo.lastFrameTime
+          const fps = Math.round((frameCountRef.current * 1000) / elapsed)
 
           setDebugInfo((prev) => ({
             ...prev,
             fps,
-            frameCount: prev.frameCount + fps,
           }))
+
+          frameCountRef.current = 0
         }, 1000)
       }
 
@@ -389,13 +471,43 @@ export default function SignToSpeechPage() {
 
     // Draw recognized gesture if available
     if (recognizedText) {
-      ctx.fillStyle = "rgba(0, 0, 0, 0.6)"
-      ctx.fillRect(0, height - 40, width, 40)
+      // Create a floating window in the bottom-left corner
+      const padding = 10
+      const boxWidth = 200
+      const boxHeight = 60
+      const cornerRadius = 8
 
+      // Draw background with rounded corners
+      ctx.fillStyle = "rgba(0, 0, 0, 0.7)"
+      ctx.beginPath()
+      ctx.moveTo(padding + cornerRadius, padding)
+      ctx.lineTo(padding + boxWidth - cornerRadius, padding)
+      ctx.arcTo(padding + boxWidth, padding, padding + boxWidth, padding + cornerRadius, cornerRadius)
+      ctx.lineTo(padding + boxWidth, padding + boxHeight - cornerRadius)
+      ctx.arcTo(
+        padding + boxWidth,
+        padding + boxHeight,
+        padding + boxWidth - cornerRadius,
+        padding + boxHeight,
+        cornerRadius,
+      )
+      ctx.lineTo(padding + cornerRadius, padding + boxHeight)
+      ctx.arcTo(padding, padding + boxHeight, padding, padding + boxHeight - cornerRadius, cornerRadius)
+      ctx.lineTo(padding, padding + cornerRadius)
+      ctx.arcTo(padding, padding, padding + cornerRadius, padding, cornerRadius)
+      ctx.closePath()
+      ctx.fill()
+
+      // Draw gesture name
       ctx.fillStyle = "white"
-      ctx.font = "bold 20px Arial"
-      ctx.textAlign = "center"
-      ctx.fillText(recognizedText, width / 2, height - 15)
+      ctx.font = "bold 18px Arial"
+      ctx.textAlign = "left"
+      ctx.fillText(recognizedText, padding + 10, padding + 25)
+
+      // Draw confidence percentage
+      ctx.fillStyle = "rgba(255, 255, 255, 0.7)"
+      ctx.font = "14px Arial"
+      ctx.fillText(`${confidenceScore.toFixed(1)}% confidence`, padding + 10, padding + 45)
     }
 
     // Draw recognized phrase if available
@@ -410,7 +522,7 @@ export default function SignToSpeechPage() {
     }
 
     // Draw gesture sequence if in progress
-    if (recognizedGestures.length > 0 && phraseDetectionEnabled) {
+    if (recognizedGestures.length > 0) {
       ctx.fillStyle = "rgba(0, 0, 0, 0.6)"
       ctx.fillRect(0, height - 80, width, 40)
 
@@ -419,9 +531,135 @@ export default function SignToSpeechPage() {
       ctx.textAlign = "center"
       ctx.fillText(`Sequence: ${recognizedGestures.join(" → ")}`, width / 2, height - 55)
     }
+
+    // Draw debug info if enabled
+    if (debugMode) {
+      const debugX = width - 150
+      const debugY = 20
+      const lineHeight = 20
+
+      ctx.fillStyle = "rgba(0, 0, 0, 0.5)"
+      ctx.fillRect(debugX - 10, debugY - 15, 160, 100)
+
+      ctx.fillStyle = "white"
+      ctx.font = "12px monospace"
+      ctx.textAlign = "left"
+      ctx.fillText(`FPS: ${debugInfo.fps}`, debugX, debugY + lineHeight * 0)
+      ctx.fillText(`Hands: ${debugInfo.handDetected ? "YES" : "NO"}`, debugX, debugY + lineHeight * 1)
+      ctx.fillText(`Mode: ${useLSTM ? "LSTM" : "Traditional"}`, debugX, debugY + lineHeight * 2)
+      ctx.fillText(`LSTM: ${isLSTMLoaded ? "Loaded" : "Not Loaded"}`, debugX, debugY + lineHeight * 3)
+      ctx.fillText(`Buffer: ${landmarksBufferRef.current.length}/30`, debugX, debugY + lineHeight * 4)
+    }
   }
 
-  // Recognize gesture using the loaded model
+  // Recognize gesture using the LSTM model
+  const recognizeGestureWithLSTM = async (landmarksBuffer: any[]) => {
+    if (!lstmModelRef.current || !isLSTMLoaded) return
+
+    try {
+      const startTime = performance.now()
+
+      // Use the LSTM model to predict the gesture
+      const prediction = lstmModelRef.current.predict(landmarksBuffer)
+
+      const endTime = performance.now()
+      const processingTime = endTime - startTime
+
+      // Update debug info
+      setDebugInfo((prev) => ({
+        ...prev,
+        processingTime,
+        lastGesture: prediction.label,
+      }))
+
+      // Only update if confidence is above threshold
+      if (prediction.confidence > confidenceThreshold) {
+        const gesture = prediction.label
+        const confidence = prediction.confidence * 100
+
+        // Add to gesture history
+        gestureHistory.current.push({
+          gesture,
+          timestamp: Date.now(),
+        })
+
+        // Keep only recent history (last 3 seconds)
+        const threeSecondsAgo = Date.now() - 3000
+        gestureHistory.current = gestureHistory.current.filter((item) => item.timestamp >= threeSecondsAgo)
+
+        // Count occurrences of each gesture in recent history
+        const gestureCounts: { [key: string]: number } = {}
+        gestureHistory.current.forEach((item) => {
+          gestureCounts[item.gesture] = (gestureCounts[item.gesture] || 0) + 1
+        })
+
+        // Update stable gesture count
+        stableGestureCount.current[gesture] = (stableGestureCount.current[gesture] || 0) + 1
+
+        // Reset counts for other gestures
+        Object.keys(stableGestureCount.current).forEach((g) => {
+          if (g !== gesture) {
+            stableGestureCount.current[g] = 0
+          }
+        })
+
+        // Only update recognized text if the gesture is stable (seen multiple times)
+        const requiredStability = 3 // Need to see the same gesture 3 times to consider it stable
+        if (stableGestureCount.current[gesture] >= requiredStability) {
+          // Only update and speak if it's a new gesture
+          if (gesture !== lastRecognizedGesture.current) {
+            setRecognizedText(gesture)
+            setConfidenceScore(confidence)
+            speakText(gesture)
+
+            // Add to detection history
+            setDetectionHistory((prev) => {
+              const newHistory = [
+                { gesture, confidence, timestamp: Date.now() },
+                ...prev.slice(0, 19), // Keep only the 20 most recent detections
+              ]
+              return newHistory
+            })
+
+            // Add to recognized gestures for phrase detection
+            if (phraseDetectionEnabled) {
+              // Reset the phrase timeout if it exists
+              if (phraseTimeoutRef.current) {
+                clearTimeout(phraseTimeoutRef.current)
+              }
+
+              // Add the new gesture to the sequence
+              setRecognizedGestures((prev) => {
+                const updatedGestures = [...prev, gesture]
+
+                // Check if this sequence matches any saved phrases
+                checkForPhraseMatch(updatedGestures)
+
+                // Set a timeout to reset the sequence after 5 seconds of inactivity
+                phraseTimeoutRef.current = setTimeout(() => {
+                  setRecognizedGestures([])
+                  phraseInProgressRef.current = false
+                }, 5000)
+
+                return updatedGestures
+              })
+
+              phraseInProgressRef.current = true
+            }
+
+            lastRecognizedGesture.current = gesture
+          } else {
+            // Just update the confidence if it's the same gesture
+            setConfidenceScore(confidence)
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error recognizing gesture with LSTM:", error)
+    }
+  }
+
+  // Recognize gesture using the traditional model
   const recognizeGesture = (currentLandmarks: any) => {
     if (!loadedModel || !currentLandmarks) return
 
@@ -476,21 +714,6 @@ export default function SignToSpeechPage() {
     // Update state with all predictions
     setLastPredictions(predictions)
 
-    // Update current detection with the highest confidence prediction
-    if (predictions.length > 0) {
-      setCurrentDetection(`${predictions[0].gesture} (${(predictions[0].confidence * 100).toFixed(1)}%)`)
-    } else {
-      setCurrentDetection("No gesture detected")
-    }
-
-    // Update debug info
-    if (predictions.length > 0) {
-      setDebugInfo((prev) => ({
-        ...prev,
-        lastGesture: `${predictions[0].gesture} (${(predictions[0].confidence * 100).toFixed(1)}%)`,
-      }))
-    }
-
     // If the top prediction has sufficient confidence
     if (predictions.length > 0 && predictions[0].confidence > confidenceThreshold) {
       const topGesture = predictions[0].gesture
@@ -530,6 +753,15 @@ export default function SignToSpeechPage() {
           setConfidenceScore(predictions[0].confidence * 100)
           speakText(topGesture)
 
+          // Add to detection history
+          setDetectionHistory((prev) => {
+            const newHistory = [
+              { gesture: topGesture, confidence: predictions[0].confidence * 100, timestamp: Date.now() },
+              ...prev.slice(0, 19), // Keep only the 20 most recent detections
+            ]
+            return newHistory
+          })
+
           // Add to recognized gestures for phrase detection
           if (phraseDetectionEnabled) {
             // Reset the phrase timeout if it exists
@@ -567,7 +799,7 @@ export default function SignToSpeechPage() {
 
   // Check if the current gesture sequence matches any saved phrases
   const checkForPhraseMatch = (gestures: string[]) => {
-    if (!phraseDetectionEnabled || gestures.length === 0) return
+    if (gestures.length === 0) return
 
     // Check each phrase for a match
     for (const phrase of phrases) {
@@ -618,686 +850,477 @@ export default function SignToSpeechPage() {
     // Normalize the hand positions to be relative to the wrist (landmark 0)
     const normalizeHand = (hand: any[]) => {
       const wrist = hand[0]
-      return hand.map((point) => ({
-        x: point.x - wrist.x,
-        y: point.y - wrist.y,
-        z: (point.z || 0) - (wrist.z || 0),
+      return hand.map((landmark) => ({
+        x: landmark.x - wrist.x,
+        y: landmark.y - wrist.y,
+        z: landmark.z ? landmark.z - (wrist.z || 0) : 0,
       }))
     }
 
     const normalizedCurrent = normalizeHand(currentHand)
     const normalizedSample = normalizeHand(sampleHand)
 
-    // Calculate the scale factor based on hand size
-    const getHandSize = (hand: any[]) => {
-      let maxDist = 0
-      for (const point of hand) {
-        const dist = Math.sqrt(point.x * point.x + point.y * point.y + point.z * point.z)
-        if (dist > maxDist) maxDist = dist
-      }
-      return maxDist
+    // Calculate Euclidean distance between corresponding landmarks
+    let totalDistance = 0
+    let maxDistance = 0
+    const numLandmarks = Math.min(normalizedCurrent.length, normalizedSample.length)
+
+    for (let i = 0; i < numLandmarks; i++) {
+      const current = normalizedCurrent[i]
+      const sample = normalizedSample[i]
+
+      const distance = Math.sqrt(
+        Math.pow(current.x - sample.x, 2) + Math.pow(current.y - sample.y, 2) + Math.pow(current.z - sample.z, 2),
+      )
+
+      totalDistance += distance
+      maxDistance = Math.max(maxDistance, distance)
     }
 
-    const currentSize = getHandSize(normalizedCurrent)
-    const sampleSize = getHandSize(normalizedSample)
+    // Calculate average distance
+    const avgDistance = totalDistance / numLandmarks
 
-    // Scale factor to normalize hand sizes
-    const scaleFactor = currentSize > 0 && sampleSize > 0 ? sampleSize / currentSize : 1
+    // Convert distance to similarity score (0-1)
+    // Lower distance = higher similarity
+    const similarity = Math.max(0, 1 - avgDistance * 5) // Scale factor of 5 to make the similarity more sensitive
 
-    // Calculate similarity between normalized landmarks
-    let totalSimilarity = 0
-    let pointCount = 0
-
-    // Focus on fingertips (landmarks 4, 8, 12, 16, 20) and key joints
-    const keyPoints = [4, 8, 12, 16, 20, 5, 9, 13, 17] // Fingertips and first knuckles
-
-    for (const pointIdx of keyPoints) {
-      if (pointIdx < normalizedCurrent.length && pointIdx < normalizedSample.length) {
-        const currentPoint = normalizedCurrent[pointIdx]
-        const samplePoint = normalizedSample[pointIdx]
-
-        // Scale the current point
-        const scaledPoint = {
-          x: currentPoint.x * scaleFactor,
-          y: currentPoint.y * scaleFactor,
-          z: currentPoint.z * scaleFactor,
-        }
-
-        // Calculate Euclidean distance
-        const distance = Math.sqrt(
-          Math.pow(scaledPoint.x - samplePoint.x, 2) +
-            Math.pow(scaledPoint.y - samplePoint.y, 2) +
-            Math.pow(scaledPoint.z - samplePoint.z, 2),
-        )
-
-        // Convert distance to similarity (1 = identical, 0 = completely different)
-        // Adjust the scaling factor as needed
-        const similarity = Math.max(0, 1 - distance * 2)
-
-        // Weight fingertips more heavily
-        const weight = [4, 8, 12, 16, 20].includes(pointIdx) ? 2.0 : 1.0
-
-        totalSimilarity += similarity * weight
-        pointCount += weight
-      }
-    }
-
-    return pointCount > 0 ? totalSimilarity / pointCount : 0
+    return similarity
   }
 
-  // Process gesture recognition
-  const processGesture = async () => {
-    if (!isCameraActive) {
-      toast({
-        title: "Camera Inactive",
-        description: "Please activate the camera first.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    if (!loadedModel) {
-      toast({
-        title: "No Model Loaded",
-        description: "Please load a trained gesture model first.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    setIsProcessing(true)
-
-    // If MediaPipe isn't running, try to reinitialize it
-    if (debugInfo.fps === 0 && cameraInitialized.current) {
-      console.log("Attempting to reinitialize MediaPipe...")
-      await initializeHolistic()
-    }
-
-    // The actual recognition happens continuously in the onResults callback
-    setTimeout(() => {
-      setIsProcessing(false)
-    }, 1000)
-  }
-
-  // Speak the recognized text
+  // Speak the recognized text using the Web Speech API
   const speakText = (text: string) => {
-    if ("speechSynthesis" in window) {
-      const utterance = new SpeechSynthesisUtterance(text)
-      window.speechSynthesis.speak(utterance)
-    }
+    if (!text || !window.speechSynthesis) return
+
+    // Cancel any ongoing speech
+    window.speechSynthesis.cancel()
+
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.rate = 1.0
+    utterance.pitch = 1.0
+    utterance.volume = 1.0
+
+    window.speechSynthesis.speak(utterance)
   }
 
-  // Reset recognition
-  const resetRecognition = () => {
-    setRecognizedText("")
-    setConfidenceScore(0)
-    setLastPredictions([])
-    setRecognizedGestures([])
-    setRecognizedPhrase(null)
-    gestureHistory.current = []
-    stableGestureCount.current = {}
-    lastRecognizedGesture.current = ""
+  // Load model from GitHub
+  const loadModelFromGitHub = async () => {
+    setIsLoadingFromGitHub(true)
 
-    if (phraseTimeoutRef.current) {
-      clearTimeout(phraseTimeoutRef.current)
-      phraseTimeoutRef.current = null
-    }
-
-    phraseInProgressRef.current = false
-  }
-
-  // Handle model selection change
-  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const modelId = e.target.value
-    setSelectedModelId(modelId)
-    loadModel(modelId)
-  }
-
-  // Toggle continuous recognition
-  const toggleContinuousRecognition = () => {
-    setContinuousRecognition(!continuousRecognition)
-    toast({
-      title: continuousRecognition ? "Continuous Recognition Disabled" : "Continuous Recognition Enabled",
-      description: continuousRecognition
-        ? "You'll need to press the Recognize button manually"
-        : "Gestures will be recognized automatically",
-    })
-  }
-
-  // Toggle phrase detection
-  const togglePhraseDetection = () => {
-    setPhraseDetectionEnabled(!phraseDetectionEnabled)
-
-    // Reset any in-progress phrase detection
-    if (phraseDetectionEnabled) {
-      setRecognizedGestures([])
-      setRecognizedPhrase(null)
-
-      if (phraseTimeoutRef.current) {
-        clearTimeout(phraseTimeoutRef.current)
-        phraseTimeoutRef.current = null
+    try {
+      // Initialize GitHub integration if not already done
+      const githubSettings = JSON.parse(localStorage.getItem("githubSettings") || "{}")
+      if (!githubSettings.owner || !githubSettings.repo) {
+        toast({
+          title: "GitHub Settings Missing",
+          description: "Please configure your GitHub settings in the Model Management page.",
+          variant: "destructive",
+        })
+        setIsLoadingFromGitHub(false)
+        return
       }
 
-      phraseInProgressRef.current = false
-    }
+      // Initialize GitHub integration
+      modelManager.initGitHub({
+        owner: githubSettings.owner,
+        repo: githubSettings.repo,
+        branch: githubSettings.branch || "main",
+      })
 
-    toast({
-      title: phraseDetectionEnabled ? "Phrase Detection Disabled" : "Phrase Detection Enabled",
-      description: phraseDetectionEnabled
-        ? "Individual gestures will be recognized without phrase matching"
-        : "Sequences of gestures will be matched against saved phrases",
-    })
-  }
+      // Load from GitHub
+      const success = await modelManager.loadFromGitHub()
 
-  // Save phrases to localStorage
-  const handleSavePhrases = (updatedPhrases: Phrase[]) => {
-    setPhrases(updatedPhrases)
-    localStorage.setItem("savedGesturePhrases", JSON.stringify(updatedPhrases))
+      if (success) {
+        toast({
+          title: "GitHub Load Successful",
+          description: "Your models have been loaded from GitHub.",
+        })
 
-    toast({
-      title: "Phrases Saved",
-      description: `Saved ${updatedPhrases.length} phrases to local storage.`,
-    })
-  }
+        // Try to load LSTM model data if available
+        try {
+          const lstmModelData = localStorage.getItem("lstm_model_data")
+          if (lstmModelData && lstmModelRef.current) {
+            const modelData = JSON.parse(lstmModelData)
+            const imported = await lstmModelRef.current.importFromGitHub(modelData)
 
-  // Check if MediaPipe is running and reinitialize if needed
-  useEffect(() => {
-    let checkInterval: NodeJS.Timeout
-
-    if (isCameraActive) {
-      checkInterval = setInterval(async () => {
-        // If FPS is 0 and camera is supposed to be active, try to reinitialize
-        if (debugInfo.fps === 0 && cameraInitialized.current) {
-          console.log("MediaPipe not running, attempting to reinitialize...")
-          await initializeHolistic()
+            if (imported) {
+              setIsLSTMLoaded(true)
+              toast({
+                title: "LSTM Model Loaded",
+                description: "LSTM model loaded from GitHub successfully.",
+              })
+            }
+          }
+        } catch (error) {
+          console.error("Error loading LSTM model from GitHub:", error)
         }
-      }, 5000) // Check every 5 seconds
+
+        // Reload available models
+        loadSavedModels()
+      } else {
+        toast({
+          title: "GitHub Load Failed",
+          description: "Failed to load models from GitHub. Please check your settings.",
+          variant: "destructive",
+        })
+      }
+    } catch (error) {
+      console.error("Error loading from GitHub:", error)
+      toast({
+        title: "GitHub Error",
+        description: "An error occurred while loading from GitHub.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoadingFromGitHub(false)
     }
-
-    return () => {
-      if (checkInterval) clearInterval(checkInterval)
-    }
-  }, [isCameraActive, debugInfo.fps])
-
-  // Clean up resources when component unmounts
-  useEffect(() => {
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop())
-      }
-
-      if (holisticRef.current) {
-        holisticRef.current.stop()
-      }
-
-      if (fpsInterval.current) {
-        clearInterval(fpsInterval.current)
-      }
-
-      if (phraseTimeoutRef.current) {
-        clearTimeout(phraseTimeoutRef.current)
-      }
-    }
-  }, [])
-
-  // Get available gestures from loaded model
-  const getAvailableGestures = () => {
-    if (!loadedModel) return []
-    return loadedModel.gestures.map((g) => g.name)
   }
 
   return (
-    <div className="container mx-auto px-4 py-12">
-      <div className="text-center mb-12">
-        <h1 className="text-3xl md:text-4xl font-bold mb-4">Sign to Speech Translation</h1>
+    <div className="container mx-auto px-4 py-8">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="text-center mb-8"
+      >
+        <div className="flex items-center justify-center mb-4">
+          <Image src="/images/gesture-logo.png" alt="Vocal2Gestures Logo" width={60} height={60} className="mr-3" />
+          <h2 className="text-3xl md:text-4xl font-bold">Sign to Speech Recognition</h2>
+        </div>
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-          Use hand gestures in front of your camera and have them translated to text and speech.
+          Use hand gestures to communicate with real-time sign language recognition powered by LSTM neural networks.
         </p>
-      </div>
+      </motion.div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-8">
-        <TabsList className="grid grid-cols-2">
-          <TabsTrigger value="recognition">
-            <MessageSquare className="mr-2 h-4 w-4" />
-            Recognition
-          </TabsTrigger>
-          <TabsTrigger value="phrases">
-            <History className="mr-2 h-4 w-4" />
-            Phrase Manager
-          </TabsTrigger>
+        <TabsList className="grid grid-cols-3 w-full max-w-md mx-auto">
+          <TabsTrigger value="recognition">Recognition</TabsTrigger>
+          <TabsTrigger value="settings">Settings</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="recognition" className="mt-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
+        <TabsContent value="recognition" className="mt-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* Camera View */}
-            <div>
-              <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-pink-50 to-purple-50 dark:from-gray-800 dark:to-gray-900">
-                <CardContent className="p-8">
-                  <div className="flex flex-col items-center">
-                    <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden mb-6">
-                      <video
-                        ref={videoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        className={`absolute inset-0 w-full h-full object-cover ${isCameraActive ? "opacity-100" : "opacity-0"}`}
-                      />
-                      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
-                      {!isCameraActive && (
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <p className="text-white">Camera is off</p>
-                        </div>
-                      )}
-                      {isCameraActive && debugInfo.fps === 0 && (
-                        <div className="absolute bottom-2 right-2 bg-red-500 text-white px-2 py-1 rounded text-xs">
-                          Detection not running
-                        </div>
-                      )}
-                      {/* Real-time Detection Window */}
-                      {isCameraActive && (
-                        <div className="absolute bottom-4 left-4 bg-black/70 backdrop-blur-sm text-white px-3 py-2 rounded-lg shadow-lg border border-gray-700 text-sm max-w-[200px] truncate">
-                          <div className="text-xs text-gray-400 mb-1">Current Detection:</div>
-                          <div className="font-medium">{currentDetection || "Waiting..."}</div>
-                        </div>
-                      )}
+            <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5 }}>
+              <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-purple-50 to-pink-50 dark:from-gray-800 dark:to-gray-900">
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <Camera className="mr-2 h-5 w-5" />
+                      <CardTitle>Camera View</CardTitle>
                     </div>
-
-                    <div className="flex gap-4 mb-6 w-full">
-                      <Button
-                        onClick={toggleCamera}
-                        className={`flex-1 ${
-                          isCameraActive
-                            ? "bg-red-500 hover:bg-red-600"
-                            : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700"
-                        }`}
-                      >
-                        {isCameraActive ? <CameraOff className="mr-2 h-4 w-4" /> : <Camera className="mr-2 h-4 w-4" />}
-                        {isCameraActive ? "Stop Camera" : "Start Camera"}
-                      </Button>
-
-                      <Button
-                        onClick={processGesture}
-                        disabled={!isCameraActive || isProcessing || !loadedModel || continuousRecognition}
-                        className="flex-1 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700"
-                      >
-                        {isProcessing ? (
-                          <>
-                            <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                            Processing...
-                          </>
-                        ) : (
-                          "Recognize Gesture"
-                        )}
-                      </Button>
-                    </div>
-
-                    <div className="w-full mb-4">
-                      <label htmlFor="model-select" className="block text-sm font-medium mb-2">
-                        Select Trained Model
-                      </label>
-                      <select
-                        id="model-select"
-                        value={selectedModelId}
-                        onChange={handleModelChange}
-                        className="w-full p-2 border rounded-md bg-background"
-                        disabled={isCameraActive}
-                      >
-                        <option value="">Select a model</option>
-                        {availableModels.map((model) => (
-                          <option key={model.id} value={model.id}>
-                            {model.name} ({new Date(model.timestamp).toLocaleString()})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {loadedModel && (
-                      <div className="w-full p-4 bg-background/80 backdrop-blur-sm rounded-lg">
-                        <h3 className="font-medium mb-2">Loaded Model Info</h3>
-                        <p className="text-sm text-muted-foreground">
-                          Gestures: {loadedModel.gestures.map((g) => g.name).join(", ")}
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          Accuracy: {loadedModel.metadata.accuracy.toFixed(2)}%
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          Trained: {new Date(loadedModel.metadata.timestamp).toLocaleString()}
-                        </p>
-                      </div>
-                    )}
-
-                    <div className="w-full mt-4">
-                      <div className="flex justify-between items-center mb-2">
-                        <label htmlFor="confidence-threshold" className="block text-sm font-medium">
-                          Confidence Threshold: {(confidenceThreshold * 100).toFixed(0)}%
-                        </label>
-                      </div>
-                      <input
-                        id="confidence-threshold"
-                        type="range"
-                        min="0.1"
-                        max="0.9"
-                        step="0.05"
-                        value={confidenceThreshold}
-                        onChange={(e) => setConfidenceThreshold(Number.parseFloat(e.target.value))}
-                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-                      />
-                      <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                        <span>Less strict (10%)</span>
-                        <span>More strict (90%)</span>
-                      </div>
-                    </div>
-
-                    <div className="w-full mt-4 flex items-center justify-between">
-                      <span className="text-sm font-medium">Continuous Recognition:</span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={toggleContinuousRecognition}
-                        className="flex items-center gap-2"
-                      >
-                        {continuousRecognition ? (
-                          <>
-                            <ToggleRight className="h-6 w-6 text-green-500" />
-                            <span className="text-green-500">ON</span>
-                          </>
-                        ) : (
-                          <>
-                            <ToggleLeft className="h-6 w-6 text-gray-500" />
-                            <span className="text-gray-500">OFF</span>
-                          </>
-                        )}
-                      </Button>
-                    </div>
-
-                    <div className="w-full mt-4 flex items-center justify-between">
-                      <span className="text-sm font-medium">Phrase Detection:</span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={togglePhraseDetection}
-                        className="flex items-center gap-2"
-                      >
-                        {phraseDetectionEnabled ? (
-                          <>
-                            <ToggleRight className="h-6 w-6 text-green-500" />
-                            <span className="text-green-500">ON</span>
-                          </>
-                        ) : (
-                          <>
-                            <ToggleLeft className="h-6 w-6 text-gray-500" />
-                            <span className="text-gray-500">OFF</span>
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Recognition Results */}
-            <div>
-              <Card className="overflow-hidden border-none shadow-lg bg-background">
-                <CardContent className="p-8">
-                  <div className="text-center mb-6">
-                    <h3 className="text-xl font-semibold mb-2">Recognized Text</h3>
-                    <p className="text-muted-foreground text-sm">The translation of your sign language gestures</p>
-                  </div>
-
-                  <div className="min-h-[200px] flex items-center justify-center">
-                    {recognizedText ? (
-                      <div className="text-center">
-                        <p className="text-3xl font-bold mb-2">{recognizedText}</p>
-                        {confidenceScore > 0 && (
-                          <p className="text-sm text-muted-foreground mb-6">
-                            Confidence: {confidenceScore.toFixed(1)}%
-                          </p>
-                        )}
-                        <Button
-                          onClick={() => speakText(recognizedText)}
-                          className="bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700"
-                        >
-                          <Volume2 className="mr-2 h-4 w-4" />
-                          Speak Again
-                        </Button>
-                      </div>
-                    ) : (
-                      <p className="text-muted-foreground text-center">
-                        {isProcessing
-                          ? "Processing your gestures..."
-                          : debugInfo.fps === 0 && isCameraActive
-                            ? "Hand detection not running. Try restarting the camera."
-                            : "Recognized text will appear here after you make hand gestures"}
-                      </p>
-                    )}
-                  </div>
-
-                  {recognizedPhrase && (
-                    <div className="mt-6 p-4 bg-gradient-to-r from-purple-100 to-pink-100 dark:from-purple-900/30 dark:to-pink-900/30 rounded-lg">
-                      <h4 className="font-medium text-center mb-2">Detected Phrase</h4>
-                      <p className="text-xl font-bold text-center mb-2">{recognizedPhrase.name}</p>
-                      <p className="text-center text-muted-foreground">
-                        {recognizedPhrase.translation || recognizedPhrase.name}
-                      </p>
-                    </div>
-                  )}
-
-                  {recognizedGestures.length > 0 && phraseDetectionEnabled && (
-                    <div className="mt-6 p-4 bg-muted/30 rounded-lg">
-                      <h4 className="font-medium mb-2">Current Gesture Sequence</h4>
-                      <div className="flex flex-wrap gap-2">
-                        {recognizedGestures.map((gesture, index) => (
-                          <div key={index} className="bg-background px-3 py-1 rounded-full flex items-center">
-                            <span className="bg-primary text-primary-foreground w-5 h-5 rounded-full flex items-center justify-center text-xs mr-2">
-                              {index + 1}
-                            </span>
-                            {gesture}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {lastPredictions.length > 0 && (
-                    <div className="mt-8">
-                      <h4 className="font-medium mb-2">All Predictions</h4>
-                      <div className="space-y-2">
-                        {lastPredictions.map((pred, index) => (
-                          <div key={index} className="flex justify-between items-center p-2 bg-muted/30 rounded-md">
-                            <span>{pred.gesture}</span>
-                            <div className="flex items-center">
-                              <div className="w-24 bg-gray-200 rounded-full h-2 mr-2">
-                                <div
-                                  className="bg-gradient-to-r from-pink-500 to-purple-500 h-2 rounded-full"
-                                  style={{ width: `${pred.confidence * 100}%` }}
-                                ></div>
-                              </div>
-                              <span className="text-xs">{(pred.confidence * 100).toFixed(1)}%</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="mt-8">
-                    <Button variant="outline" onClick={resetRecognition} className="w-full">
-                      Reset Recognition
+                    <Button onClick={toggleCamera} variant={isCameraActive ? "destructive" : "default"} size="sm">
+                      {isCameraActive ? <CameraOff className="mr-2 h-4 w-4" /> : <Camera className="mr-2 h-4 w-4" />}
+                      {isCameraActive ? "Stop Camera" : "Start Camera"}
                     </Button>
                   </div>
+                  <CardDescription>Position your hands in the camera view to detect gestures</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      style={{ objectFit: "cover" }}
+                      className={`absolute inset-0 w-full h-full ${isCameraActive ? "opacity-100" : "opacity-0"}`}
+                    />
+                    <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+                    {!isCameraActive && (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <p className="text-white">Camera is off</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Switch id="lstm-mode" checked={useLSTM} onCheckedChange={setUseLSTM} disabled={isProcessing} />
+                        <Label htmlFor="lstm-mode">Use LSTM Model</Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          id="continuous-recognition"
+                          checked={continuousRecognition}
+                          onCheckedChange={setContinuousRecognition}
+                        />
+                        <Label htmlFor="continuous-recognition">Continuous Recognition</Label>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Switch id="debug-mode" checked={debugMode} onCheckedChange={setDebugMode} />
+                        <Label htmlFor="debug-mode">Debug Mode</Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          id="phrase-detection"
+                          checked={phraseDetectionEnabled}
+                          onCheckedChange={setPhraseDetectionEnabled}
+                        />
+                        <Label htmlFor="phrase-detection">Phrase Detection</Label>
+                      </div>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
+            </motion.div>
 
-              <div className="mt-8 p-4 bg-muted/50 rounded-lg">
-                <h4 className="font-semibold mb-2">How It Works</h4>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Our system uses advanced computer vision to detect hand landmarks and recognize Indian Sign Language
-                  gestures using your trained models.
-                </p>
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="aspect-square bg-background rounded-md p-2 flex items-center justify-center">
-                    <Image
-                      src="/images/gesture-logo.png"
-                      alt="Hand landmark detection"
-                      width={80}
-                      height={80}
-                      className="max-w-full max-h-full"
-                    />
+            {/* Recognition Results */}
+            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5 }}>
+              <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-pink-50 to-purple-50 dark:from-gray-900 dark:to-gray-800">
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <Brain className="mr-2 h-5 w-5" />
+                      <CardTitle>Recognition Results</CardTitle>
+                    </div>
+                    <Button onClick={loadModelFromGitHub} variant="outline" size="sm" disabled={isLoadingFromGitHub}>
+                      {isLoadingFromGitHub ? (
+                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Github className="mr-2 h-4 w-4" />
+                      )}
+                      Load from GitHub
+                    </Button>
                   </div>
-                  <div className="aspect-square bg-background rounded-md p-2 flex items-center justify-center">
-                    <Image
-                      src="/images/gesture-logo.png"
-                      alt="Hand landmark detection"
-                      width={80}
-                      height={80}
-                      className="max-w-full max-h-full"
-                    />
+                  <CardDescription>
+                    {useLSTM
+                      ? "Using LSTM neural network for gesture recognition"
+                      : "Using traditional model for gesture recognition"}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-6">
+                    {/* Current Recognition */}
+                    <div className="p-6 bg-background rounded-lg text-center">
+                      <h3 className="text-sm font-medium text-muted-foreground mb-2">Current Recognition</h3>
+                      <div className="text-4xl font-bold mb-2">{recognizedText || "..."}</div>
+                      {recognizedText && (
+                        <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+                          <div
+                            className="bg-gradient-to-r from-purple-600 to-pink-600 h-2.5 rounded-full"
+                            style={{ width: `${confidenceScore}%` }}
+                          ></div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Phrase Recognition */}
+                    {phraseDetectionEnabled && (
+                      <div className="p-4 bg-background rounded-lg">
+                        <h3 className="text-sm font-medium text-muted-foreground mb-2">Gesture Sequence</h3>
+                        {recognizedGestures.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {recognizedGestures.map((gesture, index) => (
+                              <div
+                                key={index}
+                                className="px-3 py-1 bg-purple-100 dark:bg-purple-900 rounded-full text-sm"
+                              >
+                                {gesture}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-muted-foreground text-sm">No gesture sequence detected</p>
+                        )}
+
+                        {recognizedPhrase && (
+                          <div className="mt-4 p-3 bg-green-100 dark:bg-green-900 rounded-lg">
+                            <p className="font-medium">{recognizedPhrase.name}</p>
+                            <p className="text-sm">{recognizedPhrase.translation}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Top Predictions */}
+                    {lastPredictions.length > 0 && (
+                      <div>
+                        <h3 className="text-sm font-medium text-muted-foreground mb-2">Top Predictions</h3>
+                        <div className="space-y-2">
+                          {lastPredictions.slice(0, 3).map((prediction, index) => (
+                            <div key={index} className="flex justify-between items-center">
+                              <span>{prediction.gesture}</span>
+                              <div className="flex items-center">
+                                <div className="w-24 bg-gray-200 rounded-full h-2 mr-2 dark:bg-gray-700">
+                                  <div
+                                    className="bg-gradient-to-r from-purple-600 to-pink-600 h-2 rounded-full"
+                                    style={{ width: `${prediction.confidence * 100}%` }}
+                                  ></div>
+                                </div>
+                                <span className="text-xs">{(prediction.confidence * 100).toFixed(1)}%</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="aspect-square bg-background rounded-md p-2 flex items-center justify-center">
-                    <Image
-                      src="/images/gesture-logo.png"
-                      alt="Hand landmark detection"
-                      width={80}
-                      height={80}
-                      className="max-w-full max-h-full"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Debug Panel */}
-          <div className="mt-8">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">Debug Panel</h2>
-              <Button variant="outline" size="sm" onClick={() => setDebugMode(!debugMode)}>
-                {debugMode ? "Hide Details" : "Show Details"}
-              </Button>
-            </div>
-
-            {debugMode && (
-              <Card className="overflow-hidden border-none shadow-lg bg-gray-900 text-white">
-                <CardContent className="p-4">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-gray-800 p-3 rounded-lg">
-                      <div className="text-xs text-gray-400">FPS</div>
-                      <div className={`text-xl font-mono ${debugInfo.fps === 0 ? "text-red-400" : "text-green-400"}`}>
-                        {debugInfo.fps}
-                      </div>
-                    </div>
-                    <div className="bg-gray-800 p-3 rounded-lg">
-                      <div className="text-xs text-gray-400">Hand Detected</div>
-                      <div
-                        className={`text-xl font-mono ${debugInfo.handDetected ? "text-green-400" : "text-red-400"}`}
-                      >
-                        {debugInfo.handDetected ? "YES" : "NO"}
-                      </div>
-                    </div>
-                    <div className="bg-gray-800 p-3 rounded-lg">
-                      <div className="text-xs text-gray-400">Processing Time</div>
-                      <div className="text-xl font-mono">{debugInfo.processingTime.toFixed(2)} ms</div>
-                    </div>
-                    <div className="bg-gray-800 p-3 rounded-lg">
-                      <div className="text-xs text-gray-400">Total Frames</div>
-                      <div className="text-xl font-mono">{debugInfo.frameCount}</div>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 bg-gray-800 p-3 rounded-lg">
-                    <div className="text-xs text-gray-400 mb-2">Recognition Status</div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        Camera Active:{" "}
-                        <span className={isCameraActive ? "text-green-400" : "text-red-400"}>
-                          {isCameraActive ? "YES" : "NO"}
-                        </span>
-                      </div>
-                      <div>
-                        Processing:{" "}
-                        <span className={isProcessing ? "text-amber-400" : "text-green-400"}>
-                          {isProcessing ? "YES" : "NO"}
-                        </span>
-                      </div>
-                      <div>
-                        Model Loaded:{" "}
-                        <span className={loadedModel ? "text-green-400" : "text-red-400"}>
-                          {loadedModel ? "YES" : "NO"}
-                        </span>
-                      </div>
-                      <div>
-                        Gestures: <span className="text-blue-400">{loadedModel ? loadedModel.gestures.length : 0}</span>
-                      </div>
-                      <div>
-                        Threshold: <span className="text-purple-400">{(confidenceThreshold * 100).toFixed(0)}%</span>
-                      </div>
-                      <div>
-                        Detection:{" "}
-                        <span className={debugInfo.fps > 0 ? "text-green-400" : "text-red-400"}>
-                          {debugInfo.fps > 0 ? "RUNNING" : "STOPPED"}
-                        </span>
-                      </div>
-                      <div>
-                        Continuous:{" "}
-                        <span className={continuousRecognition ? "text-green-400" : "text-amber-400"}>
-                          {continuousRecognition ? "ON" : "OFF"}
-                        </span>
-                      </div>
-                      <div>
-                        Phrase Detection:{" "}
-                        <span className={phraseDetectionEnabled ? "text-green-400" : "text-amber-400"}>
-                          {phraseDetectionEnabled ? "ON" : "OFF"}
-                        </span>
-                      </div>
-                      <div>
-                        Last Detected: <span className="text-blue-400">{debugInfo.lastGesture || "None"}</span>
-                      </div>
-                      <div>
-                        Phrases: <span className="text-blue-400">{phrases.length}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {recognizedText && (
-                    <div className="mt-4 bg-gray-800 p-3 rounded-lg">
-                      <div className="text-xs text-gray-400 mb-2">Last Recognition</div>
-                      <div className="text-lg font-bold">{recognizedText}</div>
-                      <div className="text-sm">Confidence: {confidenceScore.toFixed(1)}%</div>
-                    </div>
-                  )}
-
-                  {recognizedGestures.length > 0 && (
-                    <div className="mt-4 bg-gray-800 p-3 rounded-lg">
-                      <div className="text-xs text-gray-400 mb-2">Current Sequence</div>
-                      <div className="text-lg">{recognizedGestures.join(" → ")}</div>
-                    </div>
-                  )}
                 </CardContent>
               </Card>
-            )}
+            </motion.div>
           </div>
         </TabsContent>
 
-        <TabsContent value="phrases" className="mt-4">
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold mb-2">Gesture Phrase Manager</h2>
-            <p className="text-muted-foreground">
-              Create and manage sequences of gestures that form complete phrases. When these sequences are detected, the
-              phrase will be spoken.
-            </p>
-            <div className="flex items-center gap-2 mt-4">
-              <Link href="/sign-to-speech-phrases" className="text-primary hover:underline">
-                Open full phrase manager in new page
-              </Link>
-            </div>
-          </div>
+        <TabsContent value="settings" className="mt-6">
+          <Card className="border-none shadow-lg">
+            <CardHeader>
+              <div className="flex items-center">
+                <Settings className="mr-2 h-5 w-5" />
+                <CardTitle>Recognition Settings</CardTitle>
+              </div>
+              <CardDescription>Configure gesture recognition parameters</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-6">
+                {/* Model Selection */}
+                <div className="space-y-2">
+                  <Label htmlFor="model-selection">Recognition Model</Label>
+                  <Select
+                    value={selectedModelId}
+                    onValueChange={(value) => {
+                      setSelectedModelId(value)
+                      loadModel(value)
+                    }}
+                  >
+                    <SelectTrigger id="model-selection">
+                      <SelectValue placeholder="Select a model" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableModels.map((model) => (
+                        <SelectItem key={model.id} value={model.id}>
+                          {model.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Select the model to use for traditional gesture recognition
+                  </p>
+                </div>
 
-          <PhraseManager
-            availableGestures={getAvailableGestures()}
-            onSavePhrases={handleSavePhrases}
-            initialPhrases={phrases}
-          />
+                {/* Confidence Threshold */}
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <Label htmlFor="confidence-threshold">Confidence Threshold</Label>
+                    <span>{(confidenceThreshold * 100).toFixed(0)}%</span>
+                  </div>
+                  <Slider
+                    id="confidence-threshold"
+                    min={0.1}
+                    max={0.9}
+                    step={0.05}
+                    value={[confidenceThreshold]}
+                    onValueChange={(value) => setConfidenceThreshold(value[0])}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Adjust how confident the system needs to be before recognizing a gesture
+                  </p>
+                </div>
+
+                {/* Recognition Delay */}
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <Label htmlFor="recognition-delay">Recognition Delay</Label>
+                    <span>{recognitionDelay}ms</span>
+                  </div>
+                  <Slider
+                    id="recognition-delay"
+                    min={100}
+                    max={1000}
+                    step={50}
+                    value={[recognitionDelay]}
+                    onValueChange={(value) => setRecognitionDelay(value[0])}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Adjust the delay between recognition attempts (lower = more responsive, higher = more stable)
+                  </p>
+                </div>
+
+                {/* Model Type */}
+                <div className="space-y-2">
+                  <Label>Recognition Model Type</Label>
+                  <div className="flex items-center space-x-2">
+                    <Switch id="use-lstm" checked={useLSTM} onCheckedChange={setUseLSTM} />
+                    <Label htmlFor="use-lstm">Use LSTM Neural Network</Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    LSTM models provide better temporal understanding of gestures but require more processing power
+                  </p>
+                </div>
+
+                {/* GitHub Integration */}
+                <div className="space-y-2">
+                  <Label>GitHub Integration</Label>
+                  <Button
+                    onClick={loadModelFromGitHub}
+                    variant="outline"
+                    className="w-full"
+                    disabled={isLoadingFromGitHub}
+                  >
+                    {isLoadingFromGitHub ? (
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Github className="mr-2 h-4 w-4" />
+                    )}
+                    Load Models from GitHub
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Load your trained models from GitHub for cross-device usage
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="history" className="mt-6">
+          <Card className="border-none shadow-lg">
+            <CardHeader>
+              <div className="flex items-center">
+                <History className="mr-2 h-5 w-5" />
+                <CardTitle>Detection History</CardTitle>
+              </div>
+              <CardDescription>Recent gesture detections and their confidence scores</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {detectionHistory.length > 0 ? (
+                <div className="space-y-4">
+                  {detectionHistory.map((detection, index) => (
+                    <div key={index} className="flex justify-between items-center p-3 bg-background rounded-lg">
+                      <div>
+                        <p className="font-medium">{detection.gesture}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(detection.timestamp).toLocaleTimeString()}
+                        </p>
+                      </div>
+                      <div className="flex items-center">
+                        <div className="w-24 bg-gray-200 rounded-full h-2 mr-2 dark:bg-gray-700">
+                          <div
+                            className="bg-gradient-to-r from-purple-600 to-pink-600 h-2 rounded-full"
+                            style={{ width: `${detection.confidence}%` }}
+                          ></div>
+                        </div>
+                        <span className="text-xs">{detection.confidence.toFixed(1)}%</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-muted-foreground">No detection history available</p>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    Start the camera and make gestures to see the detection history
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>
