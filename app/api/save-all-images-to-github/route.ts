@@ -4,12 +4,12 @@ export async function POST(request: Request) {
   try {
     const { images } = await request.json()
 
-    // Here we would normally save all images to GitHub
-    // For now, we'll just return success
-    console.log(`Saving ${images.length} images to GitHub`)
+    if (!images || !Array.isArray(images)) {
+      return NextResponse.json({ error: "Invalid images data" }, { status: 400 })
+    }
 
-    // In a real implementation, we would use the GitHub API
-    // or a server-side implementation to save all image data
+    // In a real implementation, we would use the GitHub API to save all images
+    // For now, we'll just simulate success
 
     return NextResponse.json({ success: true })
   } catch (error) {

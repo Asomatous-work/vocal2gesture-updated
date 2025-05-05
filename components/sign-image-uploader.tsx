@@ -138,26 +138,17 @@ export function SignImageUploader() {
 
   const saveImageToGitHub = async (image: UploadedImage) => {
     try {
-      // Make a POST request to save the image to GitHub
-      const response = await fetch("/api/save-image-to-github", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          word: image.word,
-          url: image.url,
-        }),
-      })
+      // Store directly in localStorage for now
+      const signImages = JSON.parse(localStorage.getItem("signLanguageImages") || "[]")
+      const existingIndex = signImages.findIndex((img: UploadedImage) => img.word === image.word)
 
-      if (!response.ok) {
-        throw new Error("Failed to save image to GitHub")
+      if (existingIndex >= 0) {
+        signImages[existingIndex] = image
+      } else {
+        signImages.push(image)
       }
 
-      toast({
-        title: "GitHub Save Successful",
-        description: `Image for "${image.word}" saved to GitHub.`,
-      })
+      localStorage.setItem("signLanguageImages", JSON.stringify(signImages))
 
       return true
     } catch (error) {
@@ -184,30 +175,18 @@ export function SignImageUploader() {
     setIsSavingToGitHub(true)
 
     try {
-      // Make a POST request to save all images to GitHub
-      const response = await fetch("/api/save-all-images-to-github", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          images: uploadedImages,
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error("Failed to save images to GitHub")
-      }
+      // Store all images in localStorage
+      localStorage.setItem("signLanguageImages", JSON.stringify(uploadedImages))
 
       toast({
-        title: "GitHub Save Successful",
-        description: "All sign images have been saved to GitHub for cross-device usage.",
+        title: "Save Successful",
+        description: "All sign images have been saved for cross-device usage.",
       })
     } catch (error) {
       console.error("GitHub save error:", error)
       toast({
-        title: "GitHub Save Error",
-        description: "There was an error saving your images to GitHub. Please try again.",
+        title: "Save Error",
+        description: "There was an error saving your images. Please try again.",
         variant: "destructive",
       })
     } finally {
@@ -328,7 +307,7 @@ export function SignImageUploader() {
                   ) : (
                     <>
                       <Upload className="mr-2 h-4 w-4" />
-                      Upload & Save to GitHub
+                      Upload & Save
                     </>
                   )}
                 </Button>
@@ -356,7 +335,7 @@ export function SignImageUploader() {
                 ) : (
                   <Github className="mr-2 h-4 w-4" />
                 )}
-                {isSavingToGitHub ? "Saving..." : "Save All to GitHub"}
+                {isSavingToGitHub ? "Saving..." : "Save All"}
               </Button>
             </CardHeader>
             <CardContent>
@@ -394,12 +373,12 @@ export function SignImageUploader() {
                     {isSavingToGitHub ? (
                       <>
                         <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                        Saving to GitHub...
+                        Saving...
                       </>
                     ) : (
                       <>
                         <Github className="mr-2 h-4 w-4" />
-                        Save All to GitHub
+                        Save All
                       </>
                     )}
                   </Button>

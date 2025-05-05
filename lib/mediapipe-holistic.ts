@@ -1,89 +1,70 @@
-import type { Results } from "@mediapipe/holistic"
-
+// This is a simplified version to avoid the Module.arguments errors
 export interface HolisticDetectionOptions {
-  modelComplexity?: 0 | 1 | 2
-  smoothLandmarks?: boolean
-  enableSegmentation?: boolean
-  refineFaceLandmarks?: boolean
-  minDetectionConfidence?: number
-  minTrackingConfidence?: number
-  onResults?: (results: Results) => void
-  onError?: (error: any) => void
+  onResults: (results: any) => void
+  onError?: (error: Error) => void
 }
 
 export class HolisticDetection {
-  private holistic: any
-  private camera: any
-  private isRunning = false
+  private holistic: any = null
+  private camera: any = null
   private options: HolisticDetectionOptions
+  private isRunning = false
 
-  constructor(options: HolisticDetectionOptions = {}) {
-    this.options = {
-      modelComplexity: 1,
-      smoothLandmarks: true,
-      enableSegmentation: false,
-      refineFaceLandmarks: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-      ...options,
-    }
+  constructor(options: HolisticDetectionOptions) {
+    this.options = options
   }
 
-  public async initialize(): Promise<boolean> {
+  public async initialize(): Promise<void> {
     try {
-      // Import MediaPipe Holistic dynamically
+      // Only initialize in browser environment
+      if (typeof window === "undefined") return
+
+      // Dynamically import MediaPipe to avoid SSR issues
       const { Holistic } = await import("@mediapipe/holistic")
 
       this.holistic = new Holistic({
         locateFile: (file: string) => {
-          return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1675471629/${file}`
+          return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
         },
       })
 
-      // Configure the holistic instance
-      await this.holistic.setOptions({
-        modelComplexity: this.options.modelComplexity,
-        smoothLandmarks: this.options.smoothLandmarks,
-        enableSegmentation: this.options.enableSegmentation,
-        refineFaceLandmarks: this.options.refineFaceLandmarks,
-        minDetectionConfidence: this.options.minDetectionConfidence,
-        minTrackingConfidence: this.options.minTrackingConfidence,
+      this.holistic.setOptions({
+        modelComplexity: 1,
+        smoothLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5,
       })
 
-      // Set up the results callback
-      this.holistic.onResults((results: Results) => {
+      this.holistic.onResults((results: any) => {
         if (this.options.onResults) {
           this.options.onResults(results)
         }
       })
-
-      return true
     } catch (error) {
       console.error("Error initializing MediaPipe Holistic:", error)
       if (this.options.onError) {
-        this.options.onError(error)
+        this.options.onError(error as Error)
       }
-      return false
     }
   }
 
-  public async start(videoElement: HTMLVideoElement): Promise<boolean> {
-    if (!this.holistic || !videoElement) {
-      return false
-    }
+  public async start(videoElement: HTMLVideoElement): Promise<void> {
+    if (!this.holistic || this.isRunning) return
 
     try {
-      // Initialize the camera
-      this.camera = new (await import("@mediapipe/camera_utils")).Camera(videoElement, {
+      // Dynamically import Camera to avoid SSR issues
+      const { Camera } = await import("@mediapipe/camera_utils")
+
+      this.camera = new Camera(videoElement, {
         onFrame: async () => {
-          if (this.isRunning && videoElement.readyState === 4) {
-            try {
-              await this.holistic.send({ image: videoElement })
-            } catch (error) {
-              console.error("Error processing frame:", error)
-              if (this.options.onError) {
-                this.options.onError(error)
-              }
+          if (!this.holistic || !this.isRunning) return
+
+          try {
+            await this.holistic.send({ image: videoElement })
+          } catch (error) {
+            console.error("Error in holistic.send:", error)
+            if (this.options.onError) {
+              this.options.onError(error as Error)
             }
           }
         },
@@ -91,27 +72,23 @@ export class HolisticDetection {
         height: 480,
       })
 
-      // Start the camera
-      await this.camera.start()
       this.isRunning = true
-      return true
+      await this.camera.start()
     } catch (error) {
-      console.error("Error starting MediaPipe Holistic:", error)
+      console.error("Error starting camera:", error)
+      this.isRunning = false
       if (this.options.onError) {
-        this.options.onError(error)
+        this.options.onError(error as Error)
       }
-      return false
     }
   }
 
   public stop(): void {
     this.isRunning = false
+
     if (this.camera) {
       this.camera.stop()
+      this.camera = null
     }
-  }
-
-  public isSupported(): boolean {
-    return typeof window !== "undefined" && navigator.mediaDevices && navigator.mediaDevices.getUserMedia
   }
 }

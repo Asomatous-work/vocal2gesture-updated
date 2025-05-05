@@ -60,10 +60,10 @@
     "zod": "^3.24.1",
     "@emotion/is-prop-valid": "latest",
     "framer-motion": "latest",
-    "@mediapipe/holistic": "latest",
-    "@mediapipe/camera_utils": "latest",
     "@vercel/blob": "latest",
-    "@tensorflow/tfjs": "latest"
+    "@tensorflow/tfjs": "latest",
+    "@mediapipe/holistic": "latest",
+    "@mediapipe/camera_utils": "latest"
   },
   "devDependencies": {
     "@types/node": "^22",
