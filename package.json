@@ -61,9 +61,9 @@
     "@emotion/is-prop-valid": "latest",
     "framer-motion": "latest",
     "@vercel/blob": "latest",
-    "@tensorflow/tfjs": "latest",
     "@mediapipe/holistic": "latest",
-    "@mediapipe/camera_utils": "latest"
+    "@mediapipe/camera_utils": "latest",
+    "@tensorflow/tfjs": "latest"
   },
   "devDependencies": {
     "@types/node": "^22",

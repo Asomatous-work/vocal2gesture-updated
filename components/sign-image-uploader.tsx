@@ -9,13 +9,14 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/components/ui/use-toast"
-import { Upload, X, ImageIcon, RefreshCw, Github } from "lucide-react"
+import { Upload, X, ImageIcon, RefreshCw, Save } from "lucide-react"
 import { upload } from "@vercel/blob/client"
 
 interface UploadedImage {
   id: string
   word: string
   url: string
+  timestamp: string
 }
 
 export function SignImageUploader() {
@@ -23,7 +24,7 @@ export function SignImageUploader() {
   const [isUploading, setIsUploading] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([])
-  const [isSavingToGitHub, setIsSavingToGitHub] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
 
@@ -102,6 +103,7 @@ export function SignImageUploader() {
         id: Date.now().toString(),
         word: word.trim(),
         url,
+        timestamp: new Date().toISOString(),
       }
 
       const updatedImages = [...uploadedImages, newImage]
@@ -109,9 +111,6 @@ export function SignImageUploader() {
 
       // Store in localStorage for persistence
       localStorage.setItem("signLanguageImages", JSON.stringify(updatedImages))
-
-      // Save to GitHub automatically
-      await saveImageToGitHub(newImage)
 
       // Reset form
       setWord("")
@@ -136,61 +135,35 @@ export function SignImageUploader() {
     }
   }
 
-  const saveImageToGitHub = async (image: UploadedImage) => {
-    try {
-      // Store directly in localStorage for now
-      const signImages = JSON.parse(localStorage.getItem("signLanguageImages") || "[]")
-      const existingIndex = signImages.findIndex((img: UploadedImage) => img.word === image.word)
-
-      if (existingIndex >= 0) {
-        signImages[existingIndex] = image
-      } else {
-        signImages.push(image)
-      }
-
-      localStorage.setItem("signLanguageImages", JSON.stringify(signImages))
-
-      return true
-    } catch (error) {
-      console.error("GitHub save error:", error)
-      toast({
-        title: "GitHub Save Warning",
-        description: "Image was saved locally but couldn't be saved to GitHub.",
-        variant: "destructive",
-      })
-      return false
-    }
-  }
-
-  const saveAllToGitHub = async () => {
+  const saveAllImages = async () => {
     if (uploadedImages.length === 0) {
       toast({
         title: "No Images",
-        description: "There are no images to save to GitHub.",
+        description: "There are no images to save.",
         variant: "destructive",
       })
       return
     }
 
-    setIsSavingToGitHub(true)
+    setIsSaving(true)
 
     try {
-      // Store all images in localStorage
+      // Save to localStorage
       localStorage.setItem("signLanguageImages", JSON.stringify(uploadedImages))
 
       toast({
-        title: "Save Successful",
-        description: "All sign images have been saved for cross-device usage.",
+        title: "Images Saved",
+        description: "All sign images have been saved successfully.",
       })
     } catch (error) {
-      console.error("GitHub save error:", error)
+      console.error("Save error:", error)
       toast({
         title: "Save Error",
-        description: "There was an error saving your images. Please try again.",
+        description: "There was an error saving your images.",
         variant: "destructive",
       })
     } finally {
-      setIsSavingToGitHub(false)
+      setIsSaving(false)
     }
   }
 
@@ -198,11 +171,8 @@ export function SignImageUploader() {
     setUploadedImages((prev) => prev.filter((img) => img.id !== id))
 
     // Update localStorage
-    const storedImages = JSON.parse(localStorage.getItem("signLanguageImages") || "[]")
-    localStorage.setItem(
-      "signLanguageImages",
-      JSON.stringify(storedImages.filter((img: UploadedImage) => img.id !== id)),
-    )
+    const updatedImages = uploadedImages.filter((img) => img.id !== id)
+    localStorage.setItem("signLanguageImages", JSON.stringify(updatedImages))
 
     toast({
       title: "Image Removed",
@@ -307,7 +277,7 @@ export function SignImageUploader() {
                   ) : (
                     <>
                       <Upload className="mr-2 h-4 w-4" />
-                      Upload & Save
+                      Upload Image
                     </>
                   )}
                 </Button>
@@ -326,16 +296,12 @@ export function SignImageUploader() {
               </div>
               <Button
                 size="sm"
-                onClick={saveAllToGitHub}
-                disabled={uploadedImages.length === 0 || isSavingToGitHub}
+                onClick={saveAllImages}
+                disabled={uploadedImages.length === 0 || isSaving}
                 className="hidden md:flex"
               >
-                {isSavingToGitHub ? (
-                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Github className="mr-2 h-4 w-4" />
-                )}
-                {isSavingToGitHub ? "Saving..." : "Save All"}
+                {isSaving ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                {isSaving ? "Saving..." : "Save All"}
               </Button>
             </CardHeader>
             <CardContent>
@@ -366,18 +332,18 @@ export function SignImageUploader() {
                     ))}
                   </div>
                   <Button
-                    onClick={saveAllToGitHub}
-                    disabled={uploadedImages.length === 0 || isSavingToGitHub}
+                    onClick={saveAllImages}
+                    disabled={uploadedImages.length === 0 || isSaving}
                     className="w-full mt-4 md:hidden"
                   >
-                    {isSavingToGitHub ? (
+                    {isSaving ? (
                       <>
                         <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
                         Saving...
                       </>
                     ) : (
                       <>
-                        <Github className="mr-2 h-4 w-4" />
+                        <Save className="mr-2 h-4 w-4" />
                         Save All
                       </>
                     )}

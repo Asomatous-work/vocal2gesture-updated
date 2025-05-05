@@ -173,12 +173,21 @@ export class LSTMGestureModel {
           }
         }
 
-        flattenedSamples.push(frameData)
+        if (frameData.length > 0) {
+          flattenedSamples.push(frameData)
+        }
       }
     }
 
+    // If no valid samples, return early
+    if (flattenedSamples.length === 0) {
+      console.warn("No valid samples for normalizer training")
+      return
+    }
+
     // Create input and output tensors (output is the same as input for normalization)
-    const inputTensor = tf.tensor2d(flattenedSamples)
+    // Explicitly provide the shape for tensor2d
+    const inputTensor = tf.tensor2d(flattenedSamples, [flattenedSamples.length, this.config.numFeatures])
 
     // Train the normalizer
     await this.normalizer!.fit(inputTensor, inputTensor, {
@@ -212,6 +221,15 @@ export class LSTMGestureModel {
       throw new Error("Model is already training")
     }
 
+    // Validate input data
+    if (trainingData.length === 0 || labels.length === 0) {
+      throw new Error("Empty training data or labels")
+    }
+
+    if (trainingData.length !== labels.length) {
+      throw new Error("Number of training samples must match number of labels")
+    }
+
     this.isTraining = true
 
     try {
@@ -229,18 +247,28 @@ export class LSTMGestureModel {
       const ys: number[] = []
 
       for (let i = 0; i < trainingData.length; i++) {
-        const processedData = this.preprocessLandmarks(trainingData[i])
-        xs.push(processedData)
+        try {
+          const processedData = this.preprocessLandmarks(trainingData[i])
+          xs.push(processedData)
 
-        // Convert label to index
-        const labelIndex = this.gestureClasses.indexOf(labels[i])
-        ys.push(labelIndex)
+          // Convert label to index
+          const labelIndex = this.gestureClasses.indexOf(labels[i])
+          ys.push(labelIndex)
+        } catch (error) {
+          console.error(`Error processing training sample ${i}:`, error)
+          // Skip this sample
+        }
+      }
+
+      // Check if we have any valid samples
+      if (xs.length === 0) {
+        throw new Error("No valid training samples after preprocessing")
       }
 
       // Concatenate all tensors
       const xsTensor = tf.concat(xs, 0)
 
-      // Convert labels to one-hot encoding
+      // Convert labels to one-hot encoding with explicit shape
       const ysTensor = tf.oneHot(tf.tensor1d(ys, "int32"), numClasses)
 
       // Train the model
