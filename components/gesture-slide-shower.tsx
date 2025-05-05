@@ -25,6 +25,16 @@ export function GestureSlideShower({ gestureName, autoPlay = false, interval = 2
     const loadGestures = async () => {
       setIsLoading(true)
 
+      // Ensure model manager is loaded
+      await modelManager.loadFromLocalStorage()
+
+      // Try to load from GitHub if available
+      try {
+        await modelManager.loadFromGitHub()
+      } catch (error) {
+        console.error("Error loading from GitHub:", error)
+      }
+
       // If a specific gesture name is provided, load only that gesture
       if (gestureName) {
         const gesture = modelManager.getGesture(gestureName)
@@ -34,9 +44,10 @@ export function GestureSlideShower({ gestureName, autoPlay = false, interval = 2
           setGestures([])
         }
       } else {
-        // Otherwise load all gestures
+        // Otherwise load all gestures that have images
         const allGestures = modelManager.getAllGestures()
-        setGestures(allGestures)
+        const gesturesWithImages = allGestures.filter((g) => g.images && g.images.length > 0)
+        setGestures(gesturesWithImages)
       }
 
       setIsLoading(false)
@@ -92,14 +103,14 @@ export function GestureSlideShower({ gestureName, autoPlay = false, interval = 2
 
   // Get current image URL
   const getCurrentImageUrl = () => {
-    if (!currentGesture) return "/placeholder.svg?key=93j57"
+    if (!currentGesture) return "/placeholder.svg?key=ng1w6"
 
     if (currentGesture.images && currentGesture.images.length > 0) {
       return currentGesture.images[currentImageIndex]
     }
 
     // Fallback to placeholder with gesture name
-    return `/placeholder.svg?height=300&width=300&query=hand gesture for ${currentGesture.name}`
+    return `/placeholder.svg?height=300&width=300&query=hand+gesture+for+${currentGesture.name}`
   }
 
   return (
@@ -119,7 +130,7 @@ export function GestureSlideShower({ gestureName, autoPlay = false, interval = 2
           <div className="flex flex-col items-center justify-center h-64 text-center">
             <p className="text-muted-foreground mb-2">No gestures found</p>
             <p className="text-sm text-muted-foreground">
-              {gestureName ? `No gesture found with name "${gestureName}"` : "Try consolidating your models first"}
+              {gestureName ? `No gesture found with name "${gestureName}"` : "Try uploading some sign images first"}
             </p>
           </div>
         ) : (
@@ -157,7 +168,7 @@ export function GestureSlideShower({ gestureName, autoPlay = false, interval = 2
             </div>
 
             <div className="mt-4">
-              <div className="flex justify-center gap-2">
+              <div className="flex justify-center gap-2 flex-wrap">
                 {gestures.map((gesture, index) => (
                   <Button
                     key={gesture.name}

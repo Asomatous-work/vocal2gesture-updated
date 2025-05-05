@@ -9,14 +9,15 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/components/ui/use-toast"
-import { Upload, X, ImageIcon, RefreshCw, Save } from "lucide-react"
-import { upload } from "@vercel/blob/client"
+import { Upload, X, ImageIcon, RefreshCw, Github, Save } from "lucide-react"
+import { modelManager } from "@/lib/model-manager"
 
 interface UploadedImage {
   id: string
   word: string
   url: string
   timestamp: string
+  dataUrl?: string // Base64 data URL for the image
 }
 
 export function SignImageUploader() {
@@ -25,6 +26,7 @@ export function SignImageUploader() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([])
   const [isSaving, setIsSaving] = useState(false)
+  const [isSavingToGitHub, setIsSavingToGitHub] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
 
@@ -93,16 +95,27 @@ export function SignImageUploader() {
 
     try {
       const file = fileInputRef.current.files[0]
-      const fileName = `sign-${word.toLowerCase().replace(/\s+/g, "-")}-${Date.now()}.${file.name.split(".").pop()}`
 
-      // Upload to Vercel Blob
-      const { url } = await upload(fileName, file, { access: "public" })
+      // Read file as data URL (base64)
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+
+      // Generate a unique ID for the image
+      const imageId = Date.now().toString()
+
+      // Create a URL for the image (using the data URL directly)
+      const imageUrl = dataUrl
 
       // Add to uploaded images
       const newImage: UploadedImage = {
-        id: Date.now().toString(),
+        id: imageId,
         word: word.trim(),
-        url,
+        url: imageUrl,
+        dataUrl: dataUrl,
         timestamp: new Date().toISOString(),
       }
 
@@ -111,6 +124,9 @@ export function SignImageUploader() {
 
       // Store in localStorage for persistence
       localStorage.setItem("signLanguageImages", JSON.stringify(updatedImages))
+
+      // Add to model manager for slideshow
+      addImageToModelManager(newImage.word, newImage.url)
 
       // Reset form
       setWord("")
@@ -135,6 +151,30 @@ export function SignImageUploader() {
     }
   }
 
+  // Add image to model manager for slideshow
+  const addImageToModelManager = (word: string, url: string) => {
+    try {
+      // Get existing gesture or create new one
+      const gesture = modelManager.getGesture(word)
+
+      if (gesture) {
+        // Add image to existing gesture
+        gesture.images = [...(gesture.images || []), url]
+        modelManager.saveGesture(gesture)
+      } else {
+        // Create new gesture with this image
+        modelManager.saveGesture({
+          name: word,
+          landmarks: [],
+          samples: 0,
+          images: [url],
+        })
+      }
+    } catch (error) {
+      console.error("Error adding image to model manager:", error)
+    }
+  }
+
   const saveAllImages = async () => {
     if (uploadedImages.length === 0) {
       toast({
@@ -150,6 +190,11 @@ export function SignImageUploader() {
     try {
       // Save to localStorage
       localStorage.setItem("signLanguageImages", JSON.stringify(uploadedImages))
+
+      // Update model manager with all images
+      for (const image of uploadedImages) {
+        addImageToModelManager(image.word, image.url)
+      }
 
       toast({
         title: "Images Saved",
@@ -167,12 +212,80 @@ export function SignImageUploader() {
     }
   }
 
+  const saveToGitHub = async () => {
+    if (uploadedImages.length === 0) {
+      toast({
+        title: "No Images",
+        description: "There are no images to save to GitHub.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setIsSavingToGitHub(true)
+
+    try {
+      // First ensure all images are in the model manager
+      for (const image of uploadedImages) {
+        addImageToModelManager(image.word, image.url)
+      }
+
+      // Configure GitHub settings if not already set
+      const githubConfig = {
+        owner: prompt("Enter GitHub username/organization:", "user") || "user",
+        repo: prompt("Enter repository name:", "vocal2gestures") || "vocal2gestures",
+        branch: prompt("Enter branch name:", "main") || "main",
+      }
+
+      modelManager.initGitHub(githubConfig)
+
+      // Save to GitHub using model manager
+      const saved = await modelManager.saveToGitHub()
+
+      if (saved) {
+        toast({
+          title: "GitHub Save Successful",
+          description: "Your sign images have been saved to GitHub for cross-device usage.",
+        })
+      } else {
+        throw new Error("Failed to save to GitHub")
+      }
+    } catch (error) {
+      console.error("GitHub save error:", error)
+      toast({
+        title: "GitHub Save Error",
+        description: "There was an error saving your images to GitHub.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSavingToGitHub(false)
+    }
+  }
+
   const removeImage = (id: string) => {
+    // Find the image to remove
+    const imageToRemove = uploadedImages.find((img) => img.id === id)
+
+    // Remove from uploaded images
     setUploadedImages((prev) => prev.filter((img) => img.id !== id))
 
     // Update localStorage
     const updatedImages = uploadedImages.filter((img) => img.id !== id)
     localStorage.setItem("signLanguageImages", JSON.stringify(updatedImages))
+
+    // If we found the image, also remove it from the model manager
+    if (imageToRemove) {
+      try {
+        const gesture = modelManager.getGesture(imageToRemove.word)
+        if (gesture && gesture.images) {
+          // Filter out the image URL
+          gesture.images = gesture.images.filter((url) => url !== imageToRemove.url)
+          modelManager.saveGesture(gesture)
+        }
+      } catch (error) {
+        console.error("Error removing image from model manager:", error)
+      }
+    }
 
     toast({
       title: "Image Removed",
@@ -294,15 +407,20 @@ export function SignImageUploader() {
                 <CardTitle>Uploaded Sign Images</CardTitle>
                 <CardDescription>Manage your collection of sign language images</CardDescription>
               </div>
-              <Button
-                size="sm"
-                onClick={saveAllImages}
-                disabled={uploadedImages.length === 0 || isSaving}
-                className="hidden md:flex"
-              >
-                {isSaving ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                {isSaving ? "Saving..." : "Save All"}
-              </Button>
+              <div className="hidden md:flex space-x-2">
+                <Button size="sm" onClick={saveAllImages} disabled={uploadedImages.length === 0 || isSaving}>
+                  {isSaving ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                  {isSaving ? "Saving..." : "Save All"}
+                </Button>
+                <Button size="sm" onClick={saveToGitHub} disabled={uploadedImages.length === 0 || isSavingToGitHub}>
+                  {isSavingToGitHub ? (
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Github className="mr-2 h-4 w-4" />
+                  )}
+                  {isSavingToGitHub ? "Saving..." : "Save to GitHub"}
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {uploadedImages.length > 0 ? (
@@ -331,23 +449,42 @@ export function SignImageUploader() {
                       </div>
                     ))}
                   </div>
-                  <Button
-                    onClick={saveAllImages}
-                    disabled={uploadedImages.length === 0 || isSaving}
-                    className="w-full mt-4 md:hidden"
-                  >
-                    {isSaving ? (
-                      <>
-                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                        Saving...
-                      </>
-                    ) : (
-                      <>
-                        <Save className="mr-2 h-4 w-4" />
-                        Save All
-                      </>
-                    )}
-                  </Button>
+                  <div className="flex flex-col md:hidden space-y-2 mt-4">
+                    <Button
+                      onClick={saveAllImages}
+                      disabled={uploadedImages.length === 0 || isSaving}
+                      className="w-full"
+                    >
+                      {isSaving ? (
+                        <>
+                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Save className="mr-2 h-4 w-4" />
+                          Save All
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      onClick={saveToGitHub}
+                      disabled={uploadedImages.length === 0 || isSavingToGitHub}
+                      className="w-full"
+                    >
+                      {isSavingToGitHub ? (
+                        <>
+                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                          Saving to GitHub...
+                        </>
+                      ) : (
+                        <>
+                          <Github className="mr-2 h-4 w-4" />
+                          Save to GitHub
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </>
               ) : (
                 <div className="flex flex-col items-center justify-center py-12 text-center">

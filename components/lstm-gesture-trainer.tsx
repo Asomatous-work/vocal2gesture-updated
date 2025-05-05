@@ -10,11 +10,12 @@ import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { Slider } from "@/components/ui/slider"
 import { useToast } from "@/components/ui/use-toast"
-import { Camera, CameraOff, Trash, RefreshCw, Terminal, Brain, Save } from "lucide-react"
+import { Camera, CameraOff, Trash, RefreshCw, Terminal, Brain, Github } from "lucide-react"
 import { HolisticDetection } from "@/lib/mediapipe-holistic"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { TrainingVisualization } from "./training-visualization"
 import { LSTMGestureModel, type LSTMModelConfig } from "@/lib/lstm-gesture-model"
+import { modelManager } from "@/lib/model-manager"
 import * as tf from "@tensorflow/tfjs"
 
 interface GestureData {
@@ -52,6 +53,7 @@ export function LSTMGestureTrainer() {
   const [isSavingToGitHub, setIsSavingToGitHub] = useState(false)
   const [isModelLoaded, setIsModelLoaded] = useState(false)
   const [tfReady, setTfReady] = useState(false)
+  const [detectionActive, setDetectionActive] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -60,6 +62,7 @@ export function LSTMGestureTrainer() {
   const landmarksRef = useRef<any[]>([])
   const logsEndRef = useRef<HTMLDivElement>(null)
   const lstmModelRef = useRef<LSTMGestureModel | null>(null)
+  const collectionTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const { toast } = useToast()
 
   // Initialize TensorFlow.js
@@ -132,6 +135,89 @@ export function LSTMGestureTrainer() {
     ])
   }
 
+  // Initialize MediaPipe Holistic
+  useEffect(() => {
+    if (!isCameraActive) return
+
+    const initializeHolistic = async () => {
+      try {
+        if (!holisticRef.current) {
+          holisticRef.current = new HolisticDetection({
+            onResults: (results) => {
+              drawResults(results)
+
+              // If collecting samples, store the landmarks
+              if (isCollecting && gestureName) {
+                const landmarks = extractLandmarks(results)
+
+                // Only add landmarks if we have valid hand data
+                if (results.leftHandLandmarks?.length > 0 || results.rightHandLandmarks?.length > 0) {
+                  landmarksRef.current.push(landmarks)
+
+                  // Update sample collection progress
+                  setSampleFrameCount(landmarksRef.current.length)
+                  setCollectionProgress((landmarksRef.current.length / totalSampleFrames) * 100)
+
+                  // Log collection progress periodically
+                  if (landmarksRef.current.length % 5 === 0) {
+                    addLog("info", `Collecting frames: ${landmarksRef.current.length}/${totalSampleFrames}`)
+                  }
+
+                  // Add sample to current gesture after collecting frames
+                  if (landmarksRef.current.length >= totalSampleFrames) {
+                    addSampleToGesture()
+                    landmarksRef.current = []
+                    setSampleFrameCount(0)
+                    setCollectionProgress(0)
+                    setIsCollecting(false)
+
+                    // Clear any existing timeout
+                    if (collectionTimeoutRef.current) {
+                      clearTimeout(collectionTimeoutRef.current)
+                      collectionTimeoutRef.current = null
+                    }
+
+                    toast({
+                      title: "Sample Collected",
+                      description: `Added a new sample for "${gestureName}"`,
+                    })
+
+                    addLog("success", `Sample collected for gesture "${gestureName}"`)
+                  }
+                }
+              }
+            },
+            onError: (error) => {
+              console.error("MediaPipe Holistic error:", error)
+              addLog("error", `Detection error: ${error.message || "Unknown error"}`)
+            },
+          })
+
+          await holisticRef.current.initialize()
+          addLog("info", "MediaPipe Holistic initialized successfully")
+        }
+
+        if (videoRef.current) {
+          await holisticRef.current.start(videoRef.current)
+          setDetectionActive(true)
+          addLog("info", "MediaPipe detection started")
+        }
+      } catch (error) {
+        console.error("Error initializing MediaPipe:", error)
+        addLog("error", `MediaPipe initialization error: ${error}`)
+      }
+    }
+
+    initializeHolistic()
+
+    return () => {
+      if (holisticRef.current) {
+        holisticRef.current.stop()
+        setDetectionActive(false)
+      }
+    }
+  }, [isCameraActive])
+
   // Toggle camera
   const toggleCamera = async () => {
     if (isCameraActive) {
@@ -143,6 +229,7 @@ export function LSTMGestureTrainer() {
 
       if (holisticRef.current) {
         holisticRef.current.stop()
+        setDetectionActive(false)
       }
 
       setIsCameraActive(false)
@@ -170,58 +257,6 @@ export function LSTMGestureTrainer() {
               videoRef.current.onloadedmetadata = () => resolve(null)
             }
           })
-
-          // Initialize and start holistic detection
-          if (!holisticRef.current) {
-            holisticRef.current = new HolisticDetection({
-              onResults: (results) => {
-                drawResults(results)
-
-                // If collecting samples, store the landmarks
-                if (isCollecting && gestureName) {
-                  const landmarks = extractLandmarks(results)
-
-                  // Only add landmarks if we have valid hand data
-                  if (results.leftHandLandmarks?.length > 0 || results.rightHandLandmarks?.length > 0) {
-                    landmarksRef.current.push(landmarks)
-
-                    // Update sample collection progress
-                    setSampleFrameCount(landmarksRef.current.length)
-                    setCollectionProgress((landmarksRef.current.length / totalSampleFrames) * 100)
-
-                    // Log collection progress periodically
-                    if (landmarksRef.current.length % 5 === 0) {
-                      addLog("info", `Collecting frames: ${landmarksRef.current.length}/${totalSampleFrames}`)
-                    }
-
-                    // Add sample to current gesture after collecting frames
-                    if (landmarksRef.current.length >= totalSampleFrames) {
-                      addSampleToGesture()
-                      landmarksRef.current = []
-                      setSampleFrameCount(0)
-                      setCollectionProgress(0)
-                      setIsCollecting(false)
-
-                      toast({
-                        title: "Sample Collected",
-                        description: `Added a new sample for "${gestureName}"`,
-                      })
-
-                      addLog("success", `Sample collected for gesture "${gestureName}"`)
-                    }
-                  }
-                }
-              },
-              onError: (error) => {
-                console.error("MediaPipe Holistic error:", error)
-                addLog("error", `Detection error: ${error.message || "Unknown error"}`)
-              },
-            })
-
-            await holisticRef.current.initialize()
-          }
-
-          await holisticRef.current.start(videoRef.current)
 
           setIsCameraActive(true)
           toast({
@@ -290,7 +325,7 @@ export function LSTMGestureTrainer() {
       return
     }
 
-    if (!isCameraActive) {
+    if (!isCameraActive || !detectionActive) {
       toast({
         title: "Camera Inactive",
         description: "Please activate the camera first.",
@@ -315,7 +350,11 @@ export function LSTMGestureTrainer() {
     addLog("info", `Started collecting sample for gesture "${gestureName}"`)
 
     // Add a safety timeout to prevent getting stuck
-    setTimeout(() => {
+    if (collectionTimeoutRef.current) {
+      clearTimeout(collectionTimeoutRef.current)
+    }
+
+    collectionTimeoutRef.current = setTimeout(() => {
       if (isCollecting) {
         if (landmarksRef.current.length > 0 && landmarksRef.current.length < totalSampleFrames) {
           // If we have some frames but not enough, save what we've got
@@ -338,6 +377,7 @@ export function LSTMGestureTrainer() {
         setSampleFrameCount(0)
         setCollectionProgress(0)
         setIsCollecting(false)
+        collectionTimeoutRef.current = null
       }
     }, 10000) // 10 second timeout
   }
@@ -699,30 +739,41 @@ export function LSTMGestureTrainer() {
     }
 
     setIsSavingToGitHub(true)
-    addLog("info", "Preparing to save LSTM model...")
+    addLog("info", "Preparing to save LSTM model to GitHub...")
 
     try {
       // Export model data
       const modelData = await lstmModelRef.current.exportForGitHub()
 
-      // Save to localStorage for now (GitHub integration would be implemented later)
+      // Save to model manager
+      for (const gesture of gestures) {
+        modelManager.saveGesture(gesture)
+      }
+
+      // Save LSTM model data
       localStorage.setItem("lstm_model_data", JSON.stringify(modelData))
 
-      toast({
-        title: "Model Saved",
-        description: "Your LSTM model has been saved for cross-device usage.",
-      })
+      // Save to GitHub
+      const saved = await modelManager.saveToGitHub()
 
-      addLog("success", "LSTM model saved successfully")
+      if (saved) {
+        toast({
+          title: "Model Saved to GitHub",
+          description: "Your LSTM model has been saved to GitHub for cross-device usage.",
+        })
+        addLog("success", "LSTM model saved to GitHub successfully")
+      } else {
+        throw new Error("Failed to save to GitHub")
+      }
     } catch (error) {
-      console.error("Error saving model:", error)
+      console.error("Error saving model to GitHub:", error)
       toast({
-        title: "Save Error",
-        description: "There was an error saving your model.",
+        title: "GitHub Save Error",
+        description: "There was an error saving your model to GitHub.",
         variant: "destructive",
       })
 
-      addLog("error", `Failed to save model: ${error}`)
+      addLog("error", `Failed to save model to GitHub: ${error}`)
     } finally {
       setIsSavingToGitHub(false)
     }
@@ -772,7 +823,11 @@ export function LSTMGestureTrainer() {
                   <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
                   {isCameraActive && (
                     <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                      {isCollecting ? `Collecting: ${sampleFrameCount}/${totalSampleFrames}` : "Ready"}
+                      {isCollecting
+                        ? `Collecting: ${sampleFrameCount}/${totalSampleFrames}`
+                        : detectionActive
+                          ? "Ready"
+                          : "Initializing..."}
                     </div>
                   )}
                   {!isCameraActive && (
@@ -823,7 +878,7 @@ export function LSTMGestureTrainer() {
                   <div className="flex gap-4">
                     <Button
                       onClick={startCollecting}
-                      disabled={!isCameraActive || isCollecting || !gestureName}
+                      disabled={!isCameraActive || isCollecting || !gestureName || !detectionActive}
                       className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 flex-1"
                     >
                       {isCollecting ? (
@@ -981,16 +1036,16 @@ export function LSTMGestureTrainer() {
                       </>
                     )}
                   </Button>
-                  <Button onClick={saveModel} disabled={!isModelLoaded || isSaving} className="flex-1">
-                    {isSaving ? (
+                  <Button onClick={saveModelToGitHub} disabled={!isModelLoaded || isSavingToGitHub} className="flex-1">
+                    {isSavingToGitHub ? (
                       <>
                         <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
                         Saving...
                       </>
                     ) : (
                       <>
-                        <Save className="mr-2 h-4 w-4" />
-                        Save Model
+                        <Github className="mr-2 h-4 w-4" />
+                        Save to GitHub
                       </>
                     )}
                   </Button>

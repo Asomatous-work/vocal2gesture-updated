@@ -8,8 +8,8 @@ export interface GestureData {
 // This is a singleton class to manage gesture models
 class ModelManager {
   private gestures: GestureData[] = []
-  private signImages: { word: string; url: string }[] = []
-  private githubConfig: { owner: string; repo: string; branch: string } | null = null
+  private signImages: { word: string; url: string; id: string }[] = []
+  private githubConfig: { owner: string; repo: string; branch: string; token?: string } | null = null
   private isInitialized = false
 
   constructor() {
@@ -35,7 +35,7 @@ class ModelManager {
   }
 
   // Initialize GitHub integration
-  public initGitHub(config: { owner: string; repo: string; branch: string }) {
+  public initGitHub(config: { owner: string; repo: string; branch: string; token?: string }) {
     this.githubConfig = config
 
     if (typeof window !== "undefined") {
@@ -53,6 +53,8 @@ class ModelManager {
         ...this.gestures[existingIndex],
         landmarks: [...this.gestures[existingIndex].landmarks, ...gesture.landmarks],
         samples: this.gestures[existingIndex].samples + gesture.samples,
+        // Preserve existing images if any
+        images: [...(this.gestures[existingIndex].images || []), ...(gesture.images || [])],
       }
     } else {
       // Add new gesture
@@ -60,6 +62,7 @@ class ModelManager {
         name: gesture.name,
         landmarks: gesture.landmarks,
         samples: gesture.samples,
+        images: gesture.images || [],
       })
     }
 
@@ -77,7 +80,8 @@ class ModelManager {
         name: gesture.name,
         landmarks: gesture.landmarks,
         samples: gesture.samples,
-        images: gesture.images,
+        // Merge images arrays, removing duplicates
+        images: Array.from(new Set([...(this.gestures[existingIndex].images || []), ...(gesture.images || [])])),
       }
     } else {
       // Add new gesture
@@ -85,7 +89,7 @@ class ModelManager {
         name: gesture.name,
         landmarks: gesture.landmarks,
         samples: gesture.samples,
-        images: gesture.images,
+        images: gesture.images || [],
       })
     }
 
@@ -94,15 +98,35 @@ class ModelManager {
   }
 
   // Add a sign image
-  public addSignImage(word: string, url: string) {
-    const existingIndex = this.signImages.findIndex((img) => img.word === word)
+  public addSignImage(word: string, url: string, id: string = Date.now().toString()) {
+    const existingIndex = this.signImages.findIndex((img) => img.id === id)
 
     if (existingIndex >= 0) {
       // Update existing image
-      this.signImages[existingIndex].url = url
+      this.signImages[existingIndex] = { word, url, id }
     } else {
       // Add new image
-      this.signImages.push({ word, url })
+      this.signImages.push({ word, url, id })
+    }
+
+    // Also add to gesture data for slideshow
+    const gestureIndex = this.gestures.findIndex((g) => g.name === word)
+    if (gestureIndex >= 0) {
+      // Add to existing gesture
+      if (!this.gestures[gestureIndex].images) {
+        this.gestures[gestureIndex].images = []
+      }
+      if (!this.gestures[gestureIndex].images.includes(url)) {
+        this.gestures[gestureIndex].images.push(url)
+      }
+    } else {
+      // Create new gesture with this image
+      this.gestures.push({
+        name: word,
+        landmarks: [],
+        samples: 0,
+        images: [url],
+      })
     }
 
     // Save to localStorage
@@ -148,6 +172,7 @@ class ModelManager {
     try {
       const gestureData = localStorage.getItem("gestureModel")
       const imageData = localStorage.getItem("signImages")
+      const signLanguageImages = localStorage.getItem("signLanguageImages")
 
       if (gestureData) {
         this.gestures = JSON.parse(gestureData)
@@ -155,6 +180,19 @@ class ModelManager {
 
       if (imageData) {
         this.signImages = JSON.parse(imageData)
+      }
+
+      // Also load from signLanguageImages if available (for backward compatibility)
+      if (signLanguageImages) {
+        try {
+          const parsedImages = JSON.parse(signLanguageImages)
+          // Add these images to gestures for slideshow
+          for (const image of parsedImages) {
+            this.addSignImage(image.word, image.url, image.id)
+          }
+        } catch (e) {
+          console.error("Error parsing signLanguageImages:", e)
+        }
       }
 
       this.isInitialized = true
@@ -168,12 +206,30 @@ class ModelManager {
   // Save model to GitHub
   public async saveToGitHub() {
     if (typeof window === "undefined") return false
-    if (!this.githubConfig) return false
+    if (!this.githubConfig) {
+      // Set default GitHub config if not already set
+      this.initGitHub({
+        owner: "user",
+        repo: "vocal2gestures",
+        branch: "main",
+      })
+    }
 
     try {
+      // Prepare data to save
+      const data = {
+        gestures: this.gestures,
+        signImages: this.signImages,
+        metadata: {
+          timestamp: new Date().toISOString(),
+          lastUpdated: new Date().toISOString(),
+        },
+      }
+
       // In a real implementation, we would use the GitHub API
-      // For now, we'll just simulate success
-      console.log("Saving to GitHub:", this.githubConfig)
+      // For now, we'll just save to localStorage with a GitHub key
+      localStorage.setItem("github_backup", JSON.stringify(data))
+      console.log("Saved to GitHub (simulated):", this.githubConfig)
 
       // Simulate API call delay
       await new Promise((resolve) => setTimeout(resolve, 1000))
@@ -192,14 +248,27 @@ class ModelManager {
 
     try {
       // In a real implementation, we would use the GitHub API
-      // For now, we'll just simulate success
-      console.log("Loading from GitHub:", this.githubConfig)
+      // For now, we'll just load from localStorage with a GitHub key
+      const githubData = localStorage.getItem("github_backup")
 
-      // Simulate API call delay
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+      if (githubData) {
+        const data = JSON.parse(githubData)
 
-      // For demo purposes, we'll just load from localStorage
-      return this.loadFromLocalStorage()
+        if (data.gestures) {
+          this.gestures = data.gestures
+        }
+
+        if (data.signImages) {
+          this.signImages = data.signImages
+        }
+
+        // Save to localStorage for consistency
+        this.saveToLocalStorage()
+
+        return true
+      }
+
+      return false
     } catch (error) {
       console.error("Error loading from GitHub:", error)
       return false
@@ -234,11 +303,43 @@ class ModelManager {
   }
 
   public async consolidateModels(): Promise<boolean> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        resolve(true)
-      }, 1000)
-    })
+    try {
+      // Load any sign language images that might not be in the model manager yet
+      const signLanguageImages = localStorage.getItem("signLanguageImages")
+      if (signLanguageImages) {
+        const parsedImages = JSON.parse(signLanguageImages)
+        for (const image of parsedImages) {
+          this.addSignImage(image.word, image.url, image.id)
+        }
+      }
+
+      // Load any LSTM model data
+      const lstmModelData = localStorage.getItem("lstm_model_data")
+      if (lstmModelData) {
+        const modelData = JSON.parse(lstmModelData)
+        if (modelData.classes) {
+          // Ensure all classes from the LSTM model are in our gestures
+          for (const className of modelData.classes) {
+            if (!this.getGesture(className)) {
+              this.saveGesture({
+                name: className,
+                landmarks: [],
+                samples: 0,
+                images: [],
+              })
+            }
+          }
+        }
+      }
+
+      // Save everything to localStorage
+      this.saveToLocalStorage()
+
+      return true
+    } catch (error) {
+      console.error("Error consolidating models:", error)
+      return false
+    }
   }
 }
 
