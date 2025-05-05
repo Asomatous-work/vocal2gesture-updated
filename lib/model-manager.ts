@@ -64,17 +64,22 @@ class ModelManager {
   private lstmModel: LSTMGestureModel | null = null
 
   constructor() {
-    // Load GitHub config from localStorage
-    this.loadGitHubConfig()
-    // Initialize by loading from localStorage
-    this.loadFromLocalStorage()
+    // Only initialize in browser environment
+    if (typeof window !== "undefined") {
+      // Load GitHub config from localStorage
+      this.loadGitHubConfig()
+      // Initialize by loading from localStorage
+      this.loadFromLocalStorage()
+    }
   }
 
   // Load GitHub configuration
   private loadGitHubConfig() {
-    this.githubToken = localStorage.getItem("githubToken")
-    this.githubRepo = localStorage.getItem("githubRepo")
-    this.githubOwner = localStorage.getItem("githubOwner")
+    if (typeof window !== "undefined") {
+      this.githubToken = localStorage.getItem("githubToken")
+      this.githubRepo = localStorage.getItem("githubRepo")
+      this.githubOwner = localStorage.getItem("githubOwner")
+    }
   }
 
   // Set GitHub configuration
@@ -84,9 +89,11 @@ class ModelManager {
     this.githubRepo = repo
 
     // Save to localStorage
-    localStorage.setItem("githubToken", token)
-    localStorage.setItem("githubOwner", owner)
-    localStorage.setItem("githubRepo", repo)
+    if (typeof window !== "undefined") {
+      localStorage.setItem("githubToken", token)
+      localStorage.setItem("githubOwner", owner)
+      localStorage.setItem("githubRepo", repo)
+    }
 
     return true
   }
@@ -190,8 +197,10 @@ class ModelManager {
     return this.signImages
   }
 
-  // Save models to localStorage
+  // Save to localStorage
   public saveToLocalStorage(): boolean {
+    if (typeof window === "undefined") return false
+
     try {
       // Save gestures
       localStorage.setItem("gestureModels", JSON.stringify(this.gestures))
@@ -208,6 +217,8 @@ class ModelManager {
 
   // Load models from localStorage
   public loadFromLocalStorage(): boolean {
+    if (typeof window === "undefined") return false
+
     try {
       // Load gestures
       const gesturesJson = localStorage.getItem("gestureModels")
@@ -232,26 +243,28 @@ class ModelManager {
   public async consolidateModels(): Promise<boolean> {
     try {
       // Load any existing models from localStorage
-      this.loadFromLocalStorage()
+      if (typeof window !== "undefined") {
+        this.loadFromLocalStorage()
 
-      // Get LSTM model data if available
-      const lstmModelData = localStorage.getItem("lstm_model_data")
+        // Get LSTM model data if available
+        const lstmModelData = localStorage.getItem("lstm_model_data")
 
-      // Create consolidated model object
-      const consolidatedModel = {
-        metadata: {
-          version: "1.0",
-          timestamp: new Date().toISOString(),
-          gestures: this.gestures.map((g) => g.name),
-          lstmModel: !!lstmModelData,
-        },
-        gestures: this.gestures,
-        signImages: this.signImages,
-        lstmModelData: lstmModelData ? JSON.parse(lstmModelData) : null,
+        // Create consolidated model object
+        const consolidatedModel = {
+          metadata: {
+            version: "1.0",
+            timestamp: new Date().toISOString(),
+            gestures: this.gestures.map((g) => g.name),
+            lstmModel: !!lstmModelData,
+          },
+          gestures: this.gestures,
+          signImages: this.signImages,
+          lstmModelData: lstmModelData ? JSON.parse(lstmModelData) : null,
+        }
+
+        // Save consolidated model to localStorage
+        localStorage.setItem("consolidatedModel", JSON.stringify(consolidatedModel))
       }
-
-      // Save consolidated model to localStorage
-      localStorage.setItem("consolidatedModel", JSON.stringify(consolidatedModel))
 
       return true
     } catch (error) {
@@ -272,7 +285,10 @@ class ModelManager {
       await this.consolidateModels()
 
       // Get consolidated model
-      const consolidatedModel = localStorage.getItem("consolidatedModel")
+      let consolidatedModel: string | null = null
+      if (typeof window !== "undefined") {
+        consolidatedModel = localStorage.getItem("consolidatedModel")
+      }
       if (!consolidatedModel) {
         throw new Error("No consolidated model found")
       }
@@ -349,7 +365,7 @@ class ModelManager {
       this.signImages = model.signImages || {}
 
       // Save LSTM model data if available
-      if (model.lstmModelData) {
+      if (model.lstmModelData && typeof window !== "undefined") {
         localStorage.setItem("lstm_model_data", JSON.stringify(model.lstmModelData))
       }
 
@@ -367,7 +383,10 @@ class ModelManager {
   public async consolidateModelsOld(): Promise<boolean> {
     try {
       // Get all saved model IDs
-      const savedModels = JSON.parse(localStorage.getItem("savedGestureModels") || "[]")
+      let savedModels: any[] = []
+      if (typeof window !== "undefined") {
+        savedModels = JSON.parse(localStorage.getItem("savedGestureModels") || "[]")
+      }
 
       if (savedModels.length === 0) {
         console.warn("No models found to consolidate")
@@ -401,7 +420,10 @@ class ModelManager {
 
       // Process each model
       for (const modelInfo of savedModels) {
-        const modelData = localStorage.getItem(modelInfo.id)
+        let modelData: string | null = null
+        if (typeof window !== "undefined") {
+          modelData = localStorage.getItem(modelInfo.id)
+        }
         if (!modelData) continue
 
         const model = JSON.parse(modelData) as GestureModel
@@ -465,7 +487,10 @@ class ModelManager {
       }
 
       // Check if we have LSTM model data to include
-      const lstmModelData = localStorage.getItem("lstm_model_data")
+      let lstmModelData: string | null = null
+      if (typeof window !== "undefined") {
+        lstmModelData = localStorage.getItem("lstm_model_data")
+      }
       if (lstmModelData) {
         consolidatedModel.lstmModelData = JSON.parse(lstmModelData)
         consolidatedModel.model.metadata.usesLSTM = true
@@ -488,26 +513,32 @@ class ModelManager {
 
     try {
       // Save the main model
-      localStorage.setItem("consolidatedGestureModel", JSON.stringify(this.consolidatedModel.model))
+      if (typeof window !== "undefined") {
+        localStorage.setItem("consolidatedGestureModel", JSON.stringify(this.consolidatedModel.model))
+      }
 
       // Save individual gesture files
       for (const [gestureName, gestureData] of Object.entries(this.consolidatedModel.gestureFiles)) {
-        localStorage.setItem(`gesture_${gestureName}`, JSON.stringify(gestureData))
+        if (typeof window !== "undefined") {
+          localStorage.setItem(`gesture_${gestureName}`, JSON.stringify(gestureData))
+        }
       }
 
       // Save metadata
-      localStorage.setItem(
-        "consolidatedModelInfo",
-        JSON.stringify({
-          version: this.consolidatedModel.version,
-          lastUpdated: this.consolidatedModel.lastUpdated,
-          gestureCount: Object.keys(this.consolidatedModel.gestureFiles).length,
-          usesLSTM: this.consolidatedModel.model.metadata.usesLSTM || false,
-        }),
-      )
+      if (typeof window !== "undefined") {
+        localStorage.setItem(
+          "consolidatedModelInfo",
+          JSON.stringify({
+            version: this.consolidatedModel.version,
+            lastUpdated: this.consolidatedModel.lastUpdated,
+            gestureCount: Object.keys(this.consolidatedModel.gestureFiles).length,
+            usesLSTM: this.consolidatedModel.model.metadata.usesLSTM || false,
+          }),
+        )
+      }
 
       // Save LSTM model data if available
-      if (this.consolidatedModel.lstmModelData) {
+      if (this.consolidatedModel.lstmModelData && typeof window !== "undefined") {
         localStorage.setItem("lstm_model_data", JSON.stringify(this.consolidatedModel.lstmModelData))
       }
 
@@ -520,7 +551,10 @@ class ModelManager {
   // Load the consolidated model from localStorage
   private loadFromLocalStorageOld(): void {
     try {
-      const modelData = localStorage.getItem("consolidatedGestureModel")
+      let modelData: string | null = null
+      if (typeof window !== "undefined") {
+        modelData = localStorage.getItem("consolidatedGestureModel")
+      }
       if (!modelData) return
 
       const model = JSON.parse(modelData) as GestureModel
@@ -528,7 +562,10 @@ class ModelManager {
       // Load individual gesture files
       const gestureFiles: Record<string, GestureData> = {}
       for (const gesture of model.gestures) {
-        const gestureData = localStorage.getItem(`gesture_${gesture.name}`)
+        let gestureData: string | null = null
+        if (typeof window !== "undefined") {
+          gestureData = localStorage.getItem(`gesture_${gesture.name}`)
+        }
         if (gestureData) {
           gestureFiles[gesture.name] = JSON.parse(gestureData)
         } else {
@@ -537,7 +574,10 @@ class ModelManager {
       }
 
       // Load metadata
-      const metadataStr = localStorage.getItem("consolidatedModelInfo")
+      let metadataStr: string | null = null
+      if (typeof window !== "undefined") {
+        metadataStr = localStorage.getItem("consolidatedModelInfo")
+      }
       const metadata = metadataStr
         ? JSON.parse(metadataStr)
         : {
@@ -546,7 +586,10 @@ class ModelManager {
           }
 
       // Load LSTM model data if available
-      const lstmModelData = localStorage.getItem("lstm_model_data")
+      let lstmModelData: string | null = null
+      if (typeof window !== "undefined") {
+        lstmModelData = localStorage.getItem("lstm_model_data")
+      }
 
       this.consolidatedModel = {
         model,
