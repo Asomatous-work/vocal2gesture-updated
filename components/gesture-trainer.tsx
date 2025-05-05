@@ -555,14 +555,14 @@ export function GestureTrainer() {
 
   // Train the model with collected gestures
   const trainModel = async () => {
-    if (gestures.length < 2) {
+    if (gestures.length < 1) {
       toast({
         title: "Not Enough Gestures",
-        description: "Please collect samples for at least 2 different gestures.",
+        description: "Please collect samples for at least 1 gesture.",
         variant: "destructive",
       })
 
-      addLog("warning", "Cannot train model: Need at least 2 different gestures")
+      addLog("warning", "Cannot train model: Need at least 1 gesture")
       return
     }
 
@@ -570,6 +570,37 @@ export function GestureTrainer() {
     setCurrentEpoch(0)
     setTrainingProgress(0)
     setEpochLoss(1.0)
+
+    // Check if we should load an existing model to add to
+    const savedModels = JSON.parse(localStorage.getItem("savedGestureModels") || "[]")
+    let existingModel = null
+    let existingModelId = ""
+
+    if (savedModels.length > 0) {
+      // Ask user if they want to add to existing model
+      const shouldAddToExisting = window.confirm(
+        "Do you want to add these gestures to an existing model? Click OK to add to the most recent model, or Cancel to create a new model.",
+      )
+
+      if (shouldAddToExisting && savedModels.length > 0) {
+        // Get the most recent model
+        const mostRecentModel = savedModels[savedModels.length - 1]
+        existingModelId = mostRecentModel.id
+
+        try {
+          const modelData = localStorage.getItem(existingModelId)
+          if (modelData) {
+            existingModel = JSON.parse(modelData)
+            addLog("info", `Loading existing model: ${mostRecentModel.name}`)
+            addLog("info", `Existing gestures: ${existingModel.gestures.map((g) => g.name).join(", ")}`)
+          }
+        } catch (error) {
+          console.error("Error loading existing model:", error)
+          addLog("error", `Failed to load existing model: ${error}`)
+          existingModel = null
+        }
+      }
+    }
 
     addLog("info", `Starting training with ${gestures.length} gestures over ${totalEpochs} epochs`)
     addLog("info", `Initial learning rate: ${learningRate}`)
@@ -671,13 +702,107 @@ export function GestureTrainer() {
 
     setIsTraining(false)
 
+    // Prepare model data - combine with existing model if available
+    let finalGestures = [...gestures]
+
+    if (existingModel) {
+      // Check for duplicate gesture names
+      const existingGestureNames = existingModel.gestures.map((g) => g.name)
+      const newGestureNames = gestures.map((g) => g.name)
+
+      // Find duplicates
+      const duplicates = newGestureNames.filter((name) => existingGestureNames.includes(name))
+
+      if (duplicates.length > 0) {
+        // Ask user what to do with duplicates
+        const shouldReplace = window.confirm(
+          `Found duplicate gestures: ${duplicates.join(", ")}. Click OK to replace them with new samples, or Cancel to keep both versions.`,
+        )
+
+        if (shouldReplace) {
+          // Replace duplicates
+          const filteredExistingGestures = existingModel.gestures.filter((g) => !duplicates.includes(g.name))
+          finalGestures = [...filteredExistingGestures, ...gestures]
+          addLog("info", `Replaced duplicate gestures: ${duplicates.join(", ")}`)
+        } else {
+          // Keep both by renaming new ones
+          const renamedGestures = gestures.map((g) => {
+            if (duplicates.includes(g.name)) {
+              return {
+                ...g,
+                name: `${g.name} (new)`,
+              }
+            }
+            return g
+          })
+          finalGestures = [...existingModel.gestures, ...renamedGestures]
+          addLog("info", `Kept both versions of duplicate gestures: ${duplicates.join(", ")}`)
+        }
+      } else {
+        // No duplicates, just combine
+        finalGestures = [...existingModel.gestures, ...gestures]
+        addLog("info", `Added ${gestures.length} new gestures to existing model`)
+      }
+    }
+
+    // Prepare the model data
+    const modelData = {
+      gestures: finalGestures,
+      metadata: {
+        epochs: totalEpochs,
+        accuracy: modelAccuracy,
+        finalLoss: epochLoss,
+        timestamp: new Date().toISOString(),
+      },
+    }
+
+    // Generate a unique model ID or use existing
+    const modelId = existingModel ? existingModelId : `gesture-model-${Date.now()}`
+    const modelName = existingModel
+      ? `Updated Model (${new Date().toLocaleString()})`
+      : `Model ${savedModels.length + 1}`
+
+    // Save to localStorage
+    localStorage.setItem(modelId, JSON.stringify(modelData))
+
+    // Update saved models list
+    if (!existingModel) {
+      savedModels.push({
+        id: modelId,
+        name: modelName,
+        gestures: finalGestures.map((g) => g.name),
+        timestamp: new Date().toISOString(),
+      })
+    } else {
+      // Update the existing model entry
+      const modelIndex = savedModels.findIndex((m) => m.id === modelId)
+      if (modelIndex >= 0) {
+        savedModels[modelIndex] = {
+          ...savedModels[modelIndex],
+          gestures: finalGestures.map((g) => g.name),
+          timestamp: new Date().toISOString(),
+        }
+      }
+    }
+
+    localStorage.setItem("savedGestureModels", JSON.stringify(savedModels))
+
+    // Set as current model
+    localStorage.setItem("currentGestureModel", modelId)
+
     toast({
-      title: "Training Complete",
-      description: `Model trained with ${gestures.length} gestures over ${totalEpochs} epochs.`,
+      title: existingModel ? "Model Updated" : "Model Saved",
+      description: existingModel
+        ? `Your model has been updated with ${gestures.length} new gestures.`
+        : "Your trained gesture model has been saved successfully.",
     })
 
-    addLog("success", `Training complete! Final accuracy: ${modelAccuracy.toFixed(2)}%`)
-    addLog("info", "Model is ready for evaluation and use")
+    addLog(
+      "success",
+      existingModel
+        ? `Model updated successfully with ${gestures.length} new gestures`
+        : `New model saved successfully with ${gestures.length} gestures`,
+    )
   }
 
   return (

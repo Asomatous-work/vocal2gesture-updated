@@ -20,6 +20,7 @@ export function Navbar() {
     return () => window.removeEventListener("scroll", handleScroll)
   }, [])
 
+  // Update the navLinks array to include the model management page
   const navLinks = [
     { name: "Home", href: "/" },
     { name: "Features", href: "/#features" },
@@ -29,6 +30,7 @@ export function Navbar() {
     { name: "Training", href: "/training" },
     { name: "Upload", href: "/upload" },
     { name: "Model Viewer", href: "/model-viewer" },
+    { name: "Model Management", href: "/model-management" },
     { name: "Contact", href: "/#contact" },
   ]
 

@@ -62,7 +62,8 @@
     "framer-motion": "latest",
     "@vercel/blob": "latest",
     "@mediapipe/holistic": "latest",
-    "@mediapipe/camera_utils": "latest"
+    "@mediapipe/camera_utils": "latest",
+    "@octokit/rest": "latest"
   },
   "devDependencies": {
     "@types/node": "^22",
