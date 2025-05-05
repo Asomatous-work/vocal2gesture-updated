@@ -25,14 +25,10 @@ export interface GestureData {
 }
 
 export interface ModelMetadata {
-  epochs: number
-  accuracy: number
-  finalLoss: number
-  timestamp: string
   version: string
-  lastUpdated: string
-  description?: string
-  usesLSTM?: boolean
+  timestamp: string
+  gestures: string[]
+  lstmModel?: boolean
 }
 
 export interface GestureModel {
@@ -56,15 +52,57 @@ interface GitHubConfig {
   branch?: string
 }
 
-export class ModelManager {
+class ModelManager {
+  private gestures: GestureData[] = []
+  private signImages: { [key: string]: string[] } = {}
+  private githubToken: string | null = null
+  private githubRepo: string | null = null
+  private githubOwner: string | null = null
   private consolidatedModel: ConsolidatedModel | null = null
   private octokit: Octokit | null = null
   private githubConfig: GitHubConfig | null = null
   private lstmModel: LSTMGestureModel | null = null
 
   constructor() {
+    // Load GitHub config from localStorage
+    this.loadGitHubConfig()
     // Initialize by loading from localStorage
     this.loadFromLocalStorage()
+  }
+
+  // Load GitHub configuration
+  private loadGitHubConfig() {
+    this.githubToken = localStorage.getItem("githubToken")
+    this.githubRepo = localStorage.getItem("githubRepo")
+    this.githubOwner = localStorage.getItem("githubOwner")
+  }
+
+  // Set GitHub configuration
+  public setGitHubConfig(token: string, owner: string, repo: string) {
+    this.githubToken = token
+    this.githubOwner = owner
+    this.githubRepo = repo
+
+    // Save to localStorage
+    localStorage.setItem("githubToken", token)
+    localStorage.setItem("githubOwner", owner)
+    localStorage.setItem("githubRepo", repo)
+
+    return true
+  }
+
+  // Check if GitHub is configured
+  public isGitHubConfigured(): boolean {
+    return !!(this.githubToken && this.githubOwner && this.githubRepo)
+  }
+
+  // Get GitHub configuration
+  public getGitHubConfig() {
+    return {
+      token: this.githubToken,
+      owner: this.githubOwner,
+      repo: this.githubRepo,
+    }
   }
 
   // Initialize GitHub integration
@@ -97,8 +135,236 @@ export class ModelManager {
     this.lstmModel = model
   }
 
-  // Consolidate all existing models into one
+  // Save a gesture
+  public saveGesture(gesture: GestureData): boolean {
+    try {
+      // Check if gesture already exists
+      const existingIndex = this.gestures.findIndex((g) => g.name === gesture.name)
+
+      if (existingIndex >= 0) {
+        // Update existing gesture
+        this.gestures[existingIndex] = gesture
+      } else {
+        // Add new gesture
+        this.gestures.push(gesture)
+      }
+
+      return true
+    } catch (error) {
+      console.error("Error saving gesture:", error)
+      return false
+    }
+  }
+
+  // Get all gestures
+  public getGestures(): GestureData[] {
+    return this.gestures
+  }
+
+  // Add a sign image
+  public addSignImage(word: string, imageUrl: string): boolean {
+    try {
+      if (!this.signImages[word]) {
+        this.signImages[word] = []
+      }
+
+      // Add image if it doesn't already exist
+      if (!this.signImages[word].includes(imageUrl)) {
+        this.signImages[word].push(imageUrl)
+      }
+
+      return true
+    } catch (error) {
+      console.error("Error adding sign image:", error)
+      return false
+    }
+  }
+
+  // Get sign images for a word
+  public getSignImages(word: string): string[] {
+    return this.signImages[word] || []
+  }
+
+  // Get all sign images
+  public getAllSignImages(): { [key: string]: string[] } {
+    return this.signImages
+  }
+
+  // Save models to localStorage
+  public saveToLocalStorage(): boolean {
+    try {
+      // Save gestures
+      localStorage.setItem("gestureModels", JSON.stringify(this.gestures))
+
+      // Save sign images
+      localStorage.setItem("signLanguageImages", JSON.stringify(this.signImages))
+
+      return true
+    } catch (error) {
+      console.error("Error saving to localStorage:", error)
+      return false
+    }
+  }
+
+  // Load models from localStorage
+  public loadFromLocalStorage(): boolean {
+    try {
+      // Load gestures
+      const gesturesJson = localStorage.getItem("gestureModels")
+      if (gesturesJson) {
+        this.gestures = JSON.parse(gesturesJson)
+      }
+
+      // Load sign images
+      const signImagesJson = localStorage.getItem("signLanguageImages")
+      if (signImagesJson) {
+        this.signImages = JSON.parse(signImagesJson)
+      }
+
+      return true
+    } catch (error) {
+      console.error("Error loading from localStorage:", error)
+      return false
+    }
+  }
+
+  // Consolidate all models for GitHub storage
   public async consolidateModels(): Promise<boolean> {
+    try {
+      // Load any existing models from localStorage
+      this.loadFromLocalStorage()
+
+      // Get LSTM model data if available
+      const lstmModelData = localStorage.getItem("lstm_model_data")
+
+      // Create consolidated model object
+      const consolidatedModel = {
+        metadata: {
+          version: "1.0",
+          timestamp: new Date().toISOString(),
+          gestures: this.gestures.map((g) => g.name),
+          lstmModel: !!lstmModelData,
+        },
+        gestures: this.gestures,
+        signImages: this.signImages,
+        lstmModelData: lstmModelData ? JSON.parse(lstmModelData) : null,
+      }
+
+      // Save consolidated model to localStorage
+      localStorage.setItem("consolidatedModel", JSON.stringify(consolidatedModel))
+
+      return true
+    } catch (error) {
+      console.error("Error consolidating models:", error)
+      return false
+    }
+  }
+
+  // Save models to GitHub
+  public async saveToGitHub(): Promise<boolean> {
+    if (!this.isGitHubConfigured()) {
+      console.error("GitHub not configured")
+      return false
+    }
+
+    try {
+      // Consolidate models first
+      await this.consolidateModels()
+
+      // Get consolidated model
+      const consolidatedModel = localStorage.getItem("consolidatedModel")
+      if (!consolidatedModel) {
+        throw new Error("No consolidated model found")
+      }
+
+      // Create Octokit instance
+      const octokit = new Octokit({
+        auth: this.githubToken,
+      })
+
+      // Check if file exists to get SHA
+      let fileSha: string | undefined
+      try {
+        const { data } = await octokit.repos.getContent({
+          owner: this.githubOwner!,
+          repo: this.githubRepo!,
+          path: "models/vocal2gestures-model.json",
+        })
+
+        if ("sha" in data) {
+          fileSha = data.sha
+        }
+      } catch (error) {
+        // File doesn't exist yet, which is fine
+        console.log("File doesn't exist yet, creating new file")
+      }
+
+      // Create or update file
+      await octokit.repos.createOrUpdateFileContents({
+        owner: this.githubOwner!,
+        repo: this.githubRepo!,
+        path: "models/vocal2gestures-model.json",
+        message: "Update gesture models",
+        content: Buffer.from(consolidatedModel).toString("base64"),
+        sha: fileSha,
+      })
+
+      return true
+    } catch (error) {
+      console.error("Error saving to GitHub:", error)
+      return false
+    }
+  }
+
+  // Load models from GitHub
+  public async loadFromGitHub(): Promise<boolean> {
+    if (!this.isGitHubConfigured()) {
+      console.error("GitHub not configured")
+      return false
+    }
+
+    try {
+      // Create Octokit instance
+      const octokit = new Octokit({
+        auth: this.githubToken,
+      })
+
+      // Get file content
+      const { data } = await octokit.repos.getContent({
+        owner: this.githubOwner!,
+        repo: this.githubRepo!,
+        path: "models/vocal2gestures-model.json",
+      })
+
+      if (!("content" in data)) {
+        throw new Error("Invalid response from GitHub")
+      }
+
+      // Decode content
+      const content = Buffer.from(data.content, "base64").toString()
+      const model = JSON.parse(content)
+
+      // Update local data
+      this.gestures = model.gestures || []
+      this.signImages = model.signImages || {}
+
+      // Save LSTM model data if available
+      if (model.lstmModelData) {
+        localStorage.setItem("lstm_model_data", JSON.stringify(model.lstmModelData))
+      }
+
+      // Save to localStorage
+      this.saveToLocalStorage()
+
+      return true
+    } catch (error) {
+      console.error("Error loading from GitHub:", error)
+      return false
+    }
+  }
+
+  // Consolidate all existing models into one
+  public async consolidateModelsOld(): Promise<boolean> {
     try {
       // Get all saved model IDs
       const savedModels = JSON.parse(localStorage.getItem("savedGestureModels") || "[]")
@@ -207,7 +473,7 @@ export class ModelManager {
 
       // Save the consolidated model
       this.consolidatedModel = consolidatedModel
-      this.saveToLocalStorage()
+      this.saveToLocalStorageOld()
 
       return true
     } catch (error) {
@@ -217,7 +483,7 @@ export class ModelManager {
   }
 
   // Save the consolidated model to localStorage
-  private saveToLocalStorage(): void {
+  private saveToLocalStorageOld(): void {
     if (!this.consolidatedModel) return
 
     try {
@@ -252,7 +518,7 @@ export class ModelManager {
   }
 
   // Load the consolidated model from localStorage
-  private loadFromLocalStorage(): void {
+  private loadFromLocalStorageOld(): void {
     try {
       const modelData = localStorage.getItem("consolidatedGestureModel")
       if (!modelData) return
@@ -297,7 +563,7 @@ export class ModelManager {
   }
 
   // Save a new gesture to the consolidated model
-  public saveGesture(gestureData: GestureData): boolean {
+  public saveGestureOld(gestureData: GestureData): boolean {
     try {
       if (!this.consolidatedModel) {
         // Initialize a new consolidated model if none exists
@@ -338,7 +604,7 @@ export class ModelManager {
       this.consolidatedModel.model.metadata.lastUpdated = new Date().toISOString()
 
       // Save to localStorage
-      this.saveToLocalStorage()
+      this.saveToLocalStorageOld()
 
       return true
     } catch (error) {
@@ -348,16 +614,16 @@ export class ModelManager {
   }
 
   // Save LSTM model data
-  public saveLSTMModelData(modelData: any): boolean {
+  public saveLSTMModelDataOld(modelData: any): boolean {
     try {
       if (!this.consolidatedModel) {
-        this.consolidateModels()
+        this.consolidateModelsOld()
       }
 
       if (this.consolidatedModel) {
         this.consolidatedModel.lstmModelData = modelData
         this.consolidatedModel.model.metadata.usesLSTM = true
-        this.saveToLocalStorage()
+        this.saveToLocalStorageOld()
         return true
       }
 
@@ -369,27 +635,27 @@ export class ModelManager {
   }
 
   // Get the consolidated model
-  public getConsolidatedModel(): GestureModel | null {
+  public getConsolidatedModelOld(): GestureModel | null {
     return this.consolidatedModel?.model || null
   }
 
   // Get a specific gesture
-  public getGesture(gestureName: string): GestureData | null {
+  public getGestureOld(gestureName: string): GestureData | null {
     return this.consolidatedModel?.gestureFiles[gestureName] || null
   }
 
   // Get all gestures
-  public getAllGestures(): GestureData[] {
+  public getAllGesturesOld(): GestureData[] {
     return this.consolidatedModel?.model.gestures || []
   }
 
   // Get LSTM model data
-  public getLSTMModelData(): any | null {
+  public getLSTMModelDataOld(): any | null {
     return this.consolidatedModel?.lstmModelData || null
   }
 
   // Save to GitHub
-  public async saveToGitHub(): Promise<boolean> {
+  public async saveToGitHubOld(): Promise<boolean> {
     if (!this.octokit || !this.githubConfig || !this.consolidatedModel) {
       console.error("GitHub not initialized or no model to save")
       return false
@@ -472,7 +738,7 @@ export class ModelManager {
   }
 
   // Load from GitHub
-  public async loadFromGitHub(): Promise<boolean> {
+  public async loadFromGitHubOld(): Promise<boolean> {
     if (!this.octokit || !this.githubConfig) {
       console.error("GitHub not initialized")
       return false
@@ -565,7 +831,7 @@ export class ModelManager {
       }
 
       // Save to localStorage for offline use
-      this.saveToLocalStorage()
+      this.saveToLocalStorageOld()
 
       console.log("Model loaded from GitHub successfully")
       return true
@@ -576,5 +842,5 @@ export class ModelManager {
   }
 }
 
-// Create a singleton instance
+// Create singleton instance
 export const modelManager = new ModelManager()

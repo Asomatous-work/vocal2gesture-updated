@@ -2,15 +2,16 @@
 
 import type React from "react"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { motion } from "framer-motion"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/components/ui/use-toast"
-import { Upload, X, ImageIcon, RefreshCw } from "lucide-react"
+import { Upload, X, ImageIcon, RefreshCw, Github } from "lucide-react"
 import { upload } from "@vercel/blob/client"
+import { modelManager } from "@/lib/model-manager"
 
 interface UploadedImage {
   id: string
@@ -23,8 +24,15 @@ export function SignImageUploader() {
   const [isUploading, setIsUploading] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([])
+  const [isSavingToGitHub, setIsSavingToGitHub] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
+
+  // Load images from localStorage on component mount
+  useEffect(() => {
+    const storedImages = JSON.parse(localStorage.getItem("signLanguageImages") || "[]")
+    setUploadedImages(storedImages)
+  }, [])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -93,7 +101,14 @@ export function SignImageUploader() {
         url,
       }
 
-      setUploadedImages((prev) => [...prev, newImage])
+      const updatedImages = [...uploadedImages, newImage]
+      setUploadedImages(updatedImages)
+
+      // Store in localStorage for persistence
+      localStorage.setItem("signLanguageImages", JSON.stringify(updatedImages))
+
+      // Save to GitHub automatically
+      await saveImageToGitHub(newImage)
 
       // Reset form
       setWord("")
@@ -104,12 +119,8 @@ export function SignImageUploader() {
 
       toast({
         title: "Upload Successful",
-        description: `Sign image for "${word}" has been uploaded.`,
+        description: `Sign image for "${word}" has been uploaded and saved to GitHub.`,
       })
-
-      // Store in localStorage for persistence
-      const storedImages = JSON.parse(localStorage.getItem("signLanguageImages") || "[]")
-      localStorage.setItem("signLanguageImages", JSON.stringify([...storedImages, newImage]))
     } catch (error) {
       console.error("Upload error:", error)
       toast({
@@ -119,6 +130,67 @@ export function SignImageUploader() {
       })
     } finally {
       setIsUploading(false)
+    }
+  }
+
+  const saveImageToGitHub = async (image: UploadedImage) => {
+    try {
+      // Add image to model manager
+      modelManager.addSignImage(image.word, image.url)
+
+      // Save to GitHub
+      await modelManager.saveToGitHub()
+
+      return true
+    } catch (error) {
+      console.error("GitHub save error:", error)
+      toast({
+        title: "GitHub Save Warning",
+        description: "Image was saved locally but couldn't be saved to GitHub.",
+        variant: "destructive",
+      })
+      return false
+    }
+  }
+
+  const saveAllToGitHub = async () => {
+    if (uploadedImages.length === 0) {
+      toast({
+        title: "No Images",
+        description: "There are no images to save to GitHub.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setIsSavingToGitHub(true)
+
+    try {
+      // Add all images to model manager
+      for (const image of uploadedImages) {
+        modelManager.addSignImage(image.word, image.url)
+      }
+
+      // Save to GitHub
+      const success = await modelManager.saveToGitHub()
+
+      if (success) {
+        toast({
+          title: "GitHub Save Successful",
+          description: "All sign images have been saved to GitHub for cross-device usage.",
+        })
+      } else {
+        throw new Error("Failed to save to GitHub")
+      }
+    } catch (error) {
+      console.error("GitHub save error:", error)
+      toast({
+        title: "GitHub Save Error",
+        description: "There was an error saving your images to GitHub.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSavingToGitHub(false)
     }
   }
 
@@ -139,20 +211,20 @@ export function SignImageUploader() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-12">
+    <div className="container mx-auto px-4 py-8 md:py-12">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="text-center mb-12"
+        className="text-center mb-8 md:mb-12"
       >
-        <h2 className="text-3xl md:text-4xl font-bold mb-4">Sign Language Image Uploader</h2>
-        <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+        <h2 className="text-2xl md:text-4xl font-bold mb-4">Sign Language Image Uploader</h2>
+        <p className="text-base md:text-lg text-muted-foreground max-w-2xl mx-auto">
           Upload images for sign language gestures to enhance the speech-to-sign translation.
         </p>
       </motion.div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
         {/* Upload Form */}
         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5 }}>
           <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-purple-50 to-pink-50 dark:from-gray-800 dark:to-gray-900">
@@ -161,7 +233,7 @@ export function SignImageUploader() {
               <CardDescription>Add new sign language images with their corresponding words or phrases</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-6">
+              <div className="space-y-4 md:space-y-6">
                 <div className="grid grid-cols-1 gap-2">
                   <Label htmlFor="word">Word or Phrase</Label>
                   <Input
@@ -235,7 +307,7 @@ export function SignImageUploader() {
                   ) : (
                     <>
                       <Upload className="mr-2 h-4 w-4" />
-                      Upload Sign Image
+                      Upload & Save to GitHub
                     </>
                   )}
                 </Button>
@@ -247,36 +319,70 @@ export function SignImageUploader() {
         {/* Uploaded Images */}
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5 }}>
           <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-pink-50 to-purple-50 dark:from-gray-900 dark:to-gray-800">
-            <CardHeader>
-              <CardTitle>Uploaded Sign Images</CardTitle>
-              <CardDescription>Manage your collection of sign language images</CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Uploaded Sign Images</CardTitle>
+                <CardDescription>Manage your collection of sign language images</CardDescription>
+              </div>
+              <Button
+                size="sm"
+                onClick={saveAllToGitHub}
+                disabled={uploadedImages.length === 0 || isSavingToGitHub}
+                className="hidden md:flex"
+              >
+                {isSavingToGitHub ? (
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Github className="mr-2 h-4 w-4" />
+                )}
+                {isSavingToGitHub ? "Saving..." : "Save All to GitHub"}
+              </Button>
             </CardHeader>
             <CardContent>
               {uploadedImages.length > 0 ? (
-                <div className="grid grid-cols-2 gap-4">
-                  {uploadedImages.map((image) => (
-                    <div key={image.id} className="relative group">
-                      <div className="aspect-square overflow-hidden rounded-md bg-muted">
-                        <img
-                          src={image.url || "/placeholder.svg"}
-                          alt={image.word}
-                          className="h-full w-full object-cover transition-transform group-hover:scale-105"
-                        />
+                <>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                    {uploadedImages.map((image) => (
+                      <div key={image.id} className="relative group">
+                        <div className="aspect-square overflow-hidden rounded-md bg-muted">
+                          <img
+                            src={image.url || "/placeholder.svg"}
+                            alt={image.word}
+                            className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                          />
+                        </div>
+                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <p className="text-white font-medium text-center px-2">{image.word}</p>
+                        </div>
+                        <Button
+                          size="icon"
+                          variant="destructive"
+                          className="absolute top-2 right-2 h-8 w-8 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={() => removeImage(image.id)}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
                       </div>
-                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                        <p className="text-white font-medium text-center px-2">{image.word}</p>
-                      </div>
-                      <Button
-                        size="icon"
-                        variant="destructive"
-                        className="absolute top-2 right-2 h-8 w-8 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={() => removeImage(image.id)}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                  <Button
+                    onClick={saveAllToGitHub}
+                    disabled={uploadedImages.length === 0 || isSavingToGitHub}
+                    className="w-full mt-4 md:hidden"
+                  >
+                    {isSavingToGitHub ? (
+                      <>
+                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                        Saving to GitHub...
+                      </>
+                    ) : (
+                      <>
+                        <Github className="mr-2 h-4 w-4" />
+                        Save All to GitHub
+                      </>
+                    )}
+                  </Button>
+                </>
               ) : (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <div className="rounded-full bg-muted p-6 mb-4">

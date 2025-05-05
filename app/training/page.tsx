@@ -1,5 +1,5 @@
-import { GestureTrainer } from "@/components/gesture-trainer"
+import { LSTMGestureTrainer } from "@/components/lstm-gesture-trainer"
 
 export default function TrainingPage() {
-  return <GestureTrainer />
+  return <LSTMGestureTrainer />
 }
