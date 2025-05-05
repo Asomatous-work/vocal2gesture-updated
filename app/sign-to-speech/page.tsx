@@ -54,6 +54,7 @@ export default function SignToSpeechPage() {
     frameCount: 0,
     lastGesture: "",
   })
+  const [currentDetection, setCurrentDetection] = useState<string>("")
 
   // Phrase detection states
   const [phrases, setPhrases] = useState<Phrase[]>([])
@@ -475,6 +476,13 @@ export default function SignToSpeechPage() {
     // Update state with all predictions
     setLastPredictions(predictions)
 
+    // Update current detection with the highest confidence prediction
+    if (predictions.length > 0) {
+      setCurrentDetection(`${predictions[0].gesture} (${(predictions[0].confidence * 100).toFixed(1)}%)`)
+    } else {
+      setCurrentDetection("No gesture detected")
+    }
+
     // Update debug info
     if (predictions.length > 0) {
       setDebugInfo((prev) => ({
@@ -883,6 +891,13 @@ export default function SignToSpeechPage() {
                       {isCameraActive && debugInfo.fps === 0 && (
                         <div className="absolute bottom-2 right-2 bg-red-500 text-white px-2 py-1 rounded text-xs">
                           Detection not running
+                        </div>
+                      )}
+                      {/* Real-time Detection Window */}
+                      {isCameraActive && (
+                        <div className="absolute bottom-4 left-4 bg-black/70 backdrop-blur-sm text-white px-3 py-2 rounded-lg shadow-lg border border-gray-700 text-sm max-w-[200px] truncate">
+                          <div className="text-xs text-gray-400 mb-1">Current Detection:</div>
+                          <div className="font-medium">{currentDetection || "Waiting..."}</div>
                         </div>
                       )}
                     </div>
