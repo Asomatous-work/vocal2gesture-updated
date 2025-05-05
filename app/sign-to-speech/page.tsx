@@ -69,24 +69,28 @@ export default function SignToSpeechPage() {
           }
         }
 
-        // Initialize LSTM model
-        const savedModels = JSON.parse(localStorage.getItem("savedLSTMModels") || "[]")
-        if (savedModels.length > 0) {
-          const latestModel = savedModels[savedModels.length - 1]
+        // Initialize LSTM model if available
+        try {
+          const savedModels = JSON.parse(localStorage.getItem("savedLSTMModels") || "[]")
+          if (savedModels.length > 0) {
+            const latestModel = savedModels[savedModels.length - 1]
 
-          // Create LSTM model instance
-          lstmModelRef.current = new LSTMGestureModel({
-            sequenceLength: 30,
-            numFeatures: 63,
-            numClasses: 0, // Will be set during load
-            hiddenUnits: 64,
-            learningRate: 0.001,
-          })
+            // Create LSTM model instance
+            lstmModelRef.current = new LSTMGestureModel({
+              sequenceLength: 30,
+              numFeatures: 63,
+              numClasses: 0, // Will be set during load
+              hiddenUnits: 64,
+              learningRate: 0.001,
+            })
 
-          const loaded = await lstmModelRef.current.loadFromLocalStorage(latestModel.id)
-          if (loaded) {
-            console.log("LSTM model loaded successfully")
+            const loaded = await lstmModelRef.current.loadFromLocalStorage(latestModel.id)
+            if (loaded) {
+              console.log("LSTM model loaded successfully")
+            }
           }
+        } catch (error) {
+          console.error("Error loading LSTM model:", error)
         }
       } catch (error) {
         console.error("Error initializing models:", error)
@@ -178,28 +182,28 @@ export default function SignToSpeechPage() {
       holisticRef.current.stop()
     }
 
-    holisticRef.current = new HolisticDetection({
-      onResults: (results) => {
-        drawResults(results)
-
-        // Only process for gesture recognition if we're in recognition mode
-        if (isRecognizing && (results.leftHandLandmarks?.length > 0 || results.rightHandLandmarks?.length > 0)) {
-          const landmarks = extractLandmarks(results)
-
-          // Check if enough time has passed since last detection
-          const now = Date.now()
-          if (now - lastDetectionTime >= recognitionDelay) {
-            recognizeGesture(landmarks)
-            setLastDetectionTime(now)
-          }
-        }
-      },
-      onError: (error) => {
-        console.error("MediaPipe Holistic error:", error)
-      },
-    })
-
     try {
+      holisticRef.current = new HolisticDetection({
+        onResults: (results) => {
+          drawResults(results)
+
+          // Only process for gesture recognition if we're in recognition mode
+          if (isRecognizing && (results.leftHandLandmarks?.length > 0 || results.rightHandLandmarks?.length > 0)) {
+            const landmarks = extractLandmarks(results)
+
+            // Check if enough time has passed since last detection
+            const now = Date.now()
+            if (now - lastDetectionTime >= recognitionDelay) {
+              recognizeGesture(landmarks)
+              setLastDetectionTime(now)
+            }
+          }
+        },
+        onError: (error) => {
+          console.error("MediaPipe Holistic error:", error)
+        },
+      })
+
       await holisticRef.current.initialize()
 
       if (videoRef.current && isCameraActive) {
@@ -283,32 +287,34 @@ export default function SignToSpeechPage() {
     drawHand(results.rightHandLandmarks, "rgba(255, 0, 255, 0.7)")
 
     // Add recognition result if available
-    if (isRecognizing && recognizedGesture) {
-      // Draw floating window in bottom-left corner
-      const padding = 10
-      const boxWidth = 200
-      const boxHeight = 60
-      const boxX = padding
-      const boxY = height - boxHeight - padding
+    if ("rgba(255, 0, 255, 0.7)")
+      if (isRecognizing && recognizedGesture) {
+        // Add recognition result if available
+        // Draw floating window in bottom-left corner
+        const padding = 10
+        const boxWidth = 200
+        const boxHeight = 60
+        const boxX = padding
+        const boxY = height - boxHeight - padding
 
-      // Draw background
-      ctx.fillStyle = "rgba(0, 0, 0, 0.7)"
-      ctx.fillRect(boxX, boxY, boxWidth, boxHeight)
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.5)"
-      ctx.lineWidth = 1
-      ctx.strokeRect(boxX, boxY, boxWidth, boxHeight)
+        // Draw background
+        ctx.fillStyle = "rgba(0, 0, 0, 0.7)"
+        ctx.fillRect(boxX, boxY, boxWidth, boxHeight)
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.5)"
+        ctx.lineWidth = 1
+        ctx.strokeRect(boxX, boxY, boxWidth, boxHeight)
 
-      // Draw text
-      ctx.fillStyle = "white"
-      ctx.font = "bold 18px Arial"
-      ctx.textAlign = "left"
-      ctx.fillText(recognizedGesture, boxX + 10, boxY + 25)
+        // Draw text
+        ctx.fillStyle = "white"
+        ctx.font = "bold 18px Arial"
+        ctx.textAlign = "left"
+        ctx.fillText(recognizedGesture, boxX + 10, boxY + 25)
 
-      // Draw confidence
-      const confidence = confidenceScores[recognizedGesture] || 0
-      ctx.font = "14px Arial"
-      ctx.fillText(`Confidence: ${(confidence * 100).toFixed(1)}%`, boxX + 10, boxY + 45)
-    }
+        // Draw confidence
+        const confidence = confidenceScores[recognizedGesture] || 0
+        ctx.font = "14px Arial"
+        ctx.fillText(`Confidence: ${(confidence * 100).toFixed(1)}%`, boxX + 10, boxY + 45)
+      }
   }
 
   // Recognize gesture using both traditional and LSTM models

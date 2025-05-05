@@ -63,8 +63,7 @@
     "@mediapipe/holistic": "latest",
     "@mediapipe/camera_utils": "latest",
     "@vercel/blob": "latest",
-    "@tensorflow/tfjs": "latest",
-    "@octokit/rest": "latest"
+    "@tensorflow/tfjs": "latest"
   },
   "devDependencies": {
     "@types/node": "^22",

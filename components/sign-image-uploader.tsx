@@ -11,7 +11,6 @@ import { Label } from "@/components/ui/label"
 import { useToast } from "@/components/ui/use-toast"
 import { Upload, X, ImageIcon, RefreshCw, Github } from "lucide-react"
 import { upload } from "@vercel/blob/client"
-import { modelManager } from "@/lib/model-manager"
 
 interface UploadedImage {
   id: string
@@ -30,8 +29,12 @@ export function SignImageUploader() {
 
   // Load images from localStorage on component mount
   useEffect(() => {
-    const storedImages = JSON.parse(localStorage.getItem("signLanguageImages") || "[]")
-    setUploadedImages(storedImages)
+    try {
+      const storedImages = JSON.parse(localStorage.getItem("signLanguageImages") || "[]")
+      setUploadedImages(storedImages)
+    } catch (error) {
+      console.error("Error loading stored images:", error)
+    }
   }, [])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -119,13 +122,13 @@ export function SignImageUploader() {
 
       toast({
         title: "Upload Successful",
-        description: `Sign image for "${word}" has been uploaded and saved to GitHub.`,
+        description: `Sign image for "${word}" has been uploaded.`,
       })
     } catch (error) {
       console.error("Upload error:", error)
       toast({
         title: "Upload Failed",
-        description: "There was an error uploading your image.",
+        description: "There was an error uploading your image. Please try again.",
         variant: "destructive",
       })
     } finally {
@@ -135,11 +138,26 @@ export function SignImageUploader() {
 
   const saveImageToGitHub = async (image: UploadedImage) => {
     try {
-      // Add image to model manager
-      modelManager.addSignImage(image.word, image.url)
+      // Make a POST request to save the image to GitHub
+      const response = await fetch("/api/save-image-to-github", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          word: image.word,
+          url: image.url,
+        }),
+      })
 
-      // Save to GitHub
-      await modelManager.saveToGitHub()
+      if (!response.ok) {
+        throw new Error("Failed to save image to GitHub")
+      }
+
+      toast({
+        title: "GitHub Save Successful",
+        description: `Image for "${image.word}" saved to GitHub.`,
+      })
 
       return true
     } catch (error) {
@@ -166,27 +184,30 @@ export function SignImageUploader() {
     setIsSavingToGitHub(true)
 
     try {
-      // Add all images to model manager
-      for (const image of uploadedImages) {
-        modelManager.addSignImage(image.word, image.url)
+      // Make a POST request to save all images to GitHub
+      const response = await fetch("/api/save-all-images-to-github", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          images: uploadedImages,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to save images to GitHub")
       }
 
-      // Save to GitHub
-      const success = await modelManager.saveToGitHub()
-
-      if (success) {
-        toast({
-          title: "GitHub Save Successful",
-          description: "All sign images have been saved to GitHub for cross-device usage.",
-        })
-      } else {
-        throw new Error("Failed to save to GitHub")
-      }
+      toast({
+        title: "GitHub Save Successful",
+        description: "All sign images have been saved to GitHub for cross-device usage.",
+      })
     } catch (error) {
       console.error("GitHub save error:", error)
       toast({
         title: "GitHub Save Error",
-        description: "There was an error saving your images to GitHub.",
+        description: "There was an error saving your images to GitHub. Please try again.",
         variant: "destructive",
       })
     } finally {
