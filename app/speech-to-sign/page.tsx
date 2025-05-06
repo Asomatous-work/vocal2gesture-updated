@@ -9,6 +9,8 @@ import { useToast } from "@/components/ui/use-toast"
 import { Mic, MicOff, Volume2, VolumeX, RefreshCw } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { LoadingSpinner } from "@/components/ui/loading-spinner"
 
 export default function SpeechToSignPage() {
   const [isListening, setIsListening] = useState(false)
@@ -18,6 +20,8 @@ export default function SpeechToSignPage() {
   const [isSpeechEnabled, setIsSpeechEnabled] = useState(true)
   const [isLoading, setIsLoading] = useState(true)
   const [autoAdvance, setAutoAdvance] = useState(true)
+  const [language, setLanguage] = useState("en-US")
+  const [isLoadingLanguage, setIsLoadingLanguage] = useState(false)
 
   const recognitionRef = useRef<any>(null)
   const autoAdvanceTimerRef = useRef<NodeJS.Timeout | null>(null)
@@ -34,12 +38,38 @@ export default function SpeechToSignPage() {
     }
 
     // Initialize speech recognition
+    initializeSpeechRecognition(language)
+
+    setIsLoading(false)
+
+    return () => {
+      // Clean up
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+      }
+
+      if (autoAdvanceTimerRef.current) {
+        clearTimeout(autoAdvanceTimerRef.current)
+      }
+    }
+  }, [language])
+
+  // Initialize speech recognition with the selected language
+  const initializeSpeechRecognition = (lang: string) => {
     if (typeof window !== "undefined" && "webkitSpeechRecognition" in window) {
+      // Stop any existing recognition
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+      }
+
+      setIsLoadingLanguage(true)
+
       // @ts-ignore - webkitSpeechRecognition is not in the types
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
       recognitionRef.current = new SpeechRecognition()
       recognitionRef.current.continuous = true
       recognitionRef.current.interimResults = true
+      recognitionRef.current.lang = lang
 
       recognitionRef.current.onresult = (event: any) => {
         let interimTranscript = ""
@@ -72,6 +102,20 @@ export default function SpeechToSignPage() {
           setIsListening(false)
         }
       }
+
+      recognitionRef.current.onend = () => {
+        setIsLoadingLanguage(false)
+        // If we're still supposed to be listening, restart
+        if (isListening) {
+          try {
+            recognitionRef.current.start()
+          } catch (error) {
+            console.error("Error restarting speech recognition:", error)
+          }
+        }
+      }
+
+      setIsLoadingLanguage(false)
     } else {
       toast({
         title: "Speech Recognition Not Supported",
@@ -79,20 +123,7 @@ export default function SpeechToSignPage() {
         variant: "destructive",
       })
     }
-
-    setIsLoading(false)
-
-    return () => {
-      // Clean up
-      if (recognitionRef.current) {
-        recognitionRef.current.stop()
-      }
-
-      if (autoAdvanceTimerRef.current) {
-        clearTimeout(autoAdvanceTimerRef.current)
-      }
-    }
-  }, [toast])
+  }
 
   // Process transcript and find matching signs
   const processTranscript = (text: string) => {
@@ -198,6 +229,17 @@ export default function SpeechToSignPage() {
     const utterance = new SpeechSynthesisUtterance(text)
     utterance.rate = 0.9
     utterance.pitch = 1.0
+
+    // Set language for speech synthesis
+    if (language.startsWith("ta")) {
+      // For Tamil, try to find a Tamil voice
+      const voices = window.speechSynthesis.getVoices()
+      const tamilVoice = voices.find((voice) => voice.lang.startsWith("ta"))
+      if (tamilVoice) {
+        utterance.voice = tamilVoice
+      }
+    }
+
     window.speechSynthesis.speak(utterance)
   }
 
@@ -210,6 +252,35 @@ export default function SpeechToSignPage() {
       clearTimeout(autoAdvanceTimerRef.current)
       autoAdvanceTimerRef.current = null
     }
+  }
+
+  // Handle language change
+  const handleLanguageChange = (value: string) => {
+    setLanguage(value)
+    // Reinitialize speech recognition with new language
+    initializeSpeechRecognition(value)
+
+    // If currently listening, stop and restart with new language
+    if (isListening) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+      }
+
+      setTimeout(() => {
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.start()
+          } catch (error) {
+            console.error("Error restarting speech recognition:", error)
+          }
+        }
+      }, 300)
+    }
+
+    toast({
+      title: "Language Changed",
+      description: `Speech recognition language set to ${value === "ta-IN" ? "Tamil" : "English"}`,
+    })
   }
 
   return (
@@ -248,9 +319,26 @@ export default function SpeechToSignPage() {
               </Button>
             </CardHeader>
             <CardContent className="flex flex-col h-full">
+              <div className="mb-4">
+                <Label htmlFor="language" className="mb-2 block">
+                  Language
+                </Label>
+                <Select value={language} onValueChange={handleLanguageChange}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select language" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="en-US">English (US)</SelectItem>
+                    <SelectItem value="ta-IN">Tamil (India)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="flex-grow mb-4">
                 <div className="p-4 bg-background rounded-lg min-h-[150px] flex items-center justify-center">
-                  {isListening ? (
+                  {isLoadingLanguage ? (
+                    <LoadingSpinner text="Loading language..." />
+                  ) : isListening ? (
                     transcript ? (
                       <p className="text-lg">{transcript}</p>
                     ) : (
@@ -270,7 +358,7 @@ export default function SpeechToSignPage() {
                       ? "bg-red-500 hover:bg-red-600"
                       : "bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
                   }`}
-                  disabled={isLoading}
+                  disabled={isLoading || isLoadingLanguage}
                 >
                   {isListening ? <MicOff className="mr-2 h-4 w-4" /> : <Mic className="mr-2 h-4 w-4" />}
                   {isListening ? "Stop Listening" : "Start Listening"}

@@ -1,3 +1,4 @@
+// Fix the NPM_TOKEN access issue by removing any client-side environment variable access
 export interface GestureData {
   name: string
   landmarks: any[]
@@ -29,6 +30,13 @@ class ModelManager {
       const config = localStorage.getItem("githubSettings")
       if (config) {
         this.githubConfig = JSON.parse(config)
+      } else {
+        // Set default config if none exists
+        this.githubConfig = {
+          owner: "Asomatous-work",
+          repo: "vocal2gesture-updated",
+          branch: "main",
+        }
       }
     } catch (error) {
       console.error("Error loading GitHub config:", error)
@@ -240,8 +248,8 @@ class ModelManager {
   // Save model to GitHub - now using real GitHub API
   public async saveToGitHub() {
     if (typeof window === "undefined") return false
-    if (!this.githubConfig || !this.githubConfig.token) {
-      console.error("GitHub configuration or token missing")
+    if (!this.githubConfig) {
+      console.error("GitHub configuration missing")
       return false
     }
 
@@ -364,8 +372,8 @@ class ModelManager {
   // Load model from GitHub - now using real GitHub API
   public async loadFromGitHub() {
     if (typeof window === "undefined") return false
-    if (!this.githubConfig || !this.githubConfig.token) {
-      console.error("GitHub configuration or token missing")
+    if (!this.githubConfig) {
+      console.error("GitHub configuration missing")
       return false
     }
 
@@ -427,7 +435,7 @@ class ModelManager {
 
   // Load images from GitHub
   private async loadImagesFromGitHub() {
-    if (!this.githubConfig || !this.githubConfig.token) {
+    if (!this.githubConfig) {
       return false
     }
 

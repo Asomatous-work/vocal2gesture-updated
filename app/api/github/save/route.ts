@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server"
+import { type NextRequest, NextResponse } from "next/server"
 import { Octokit } from "@octokit/rest"
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const { owner, repo, branch, path, content, message, token } = await request.json()
+    const { owner, repo, path, content, message, branch, token } = await request.json()
 
     // Validate required fields
     if (!owner || !repo || !path || !content || !token) {
@@ -18,8 +18,8 @@ export async function POST(request: Request) {
       auth: token,
     })
 
-    // Check if file already exists to get the SHA (needed for updates)
-    let fileSha: string | undefined
+    // Check if the file already exists to determine if we need to create or update
+    let sha: string | undefined
     try {
       const { data: fileData } = await octokit.repos.getContent({
         owner,
@@ -28,58 +28,47 @@ export async function POST(request: Request) {
         ref: branch || "main",
       })
 
-      // If the file exists and it's not a directory, get its SHA
-      if (!Array.isArray(fileData) && fileData.type === "file") {
-        fileSha = fileData.sha
+      // If the file exists, get its SHA
+      if (!Array.isArray(fileData)) {
+        sha = fileData.sha
       }
-    } catch (error) {
-      // File doesn't exist yet, which is fine for creating new files
-      console.log("File doesn't exist yet, will create it")
+    } catch (error: any) {
+      // If the file doesn't exist (404), that's fine - we'll create it
+      if (error.status !== 404) {
+        console.error("Error checking if file exists:", error)
+        return NextResponse.json({ error: `Error checking if file exists: ${error.message}` }, { status: 500 })
+      }
     }
 
-    // Prepare the content (Base64 encode)
-    const contentEncoded = Buffer.from(content).toString("base64")
-
     // Create or update the file
-    const response = await octokit.repos.createOrUpdateFileContents({
+    const result = await octokit.repos.createOrUpdateFileContents({
       owner,
       repo,
       path,
       message: message || `Update ${path}`,
-      content: contentEncoded,
+      content: content,
       branch: branch || "main",
-      sha: fileSha, // Include SHA if updating an existing file
+      sha,
     })
 
     return NextResponse.json({
       success: true,
       data: {
-        sha: response.data.content?.sha,
-        url: response.data.content?.html_url,
+        sha: result.data.content?.sha,
+        url: result.data.content?.html_url,
       },
     })
   } catch (error: any) {
-    console.error("GitHub API error:", error)
+    console.error("Error saving to GitHub:", error)
 
-    // Handle rate limiting
-    if (error.status === 403 && error.response?.headers?.["x-ratelimit-remaining"] === "0") {
+    // Handle specific error cases
+    if (error.message?.includes("Bad credentials")) {
       return NextResponse.json(
-        {
-          error: "GitHub API rate limit exceeded",
-          resetAt: new Date(Number.parseInt(error.response.headers["x-ratelimit-reset"]) * 1000).toISOString(),
-        },
-        { status: 429 },
+        { error: "Invalid GitHub token. Please check your token and try again." },
+        { status: 401 },
       )
     }
 
-    // Handle authentication errors
-    if (error.status === 401) {
-      return NextResponse.json({ error: "Invalid GitHub token" }, { status: 401 })
-    }
-
-    return NextResponse.json(
-      { error: error.message || "Failed to save file to GitHub" },
-      { status: error.status || 500 },
-    )
+    return NextResponse.json({ error: `Error saving to GitHub: ${error.message}` }, { status: 500 })
   }
 }

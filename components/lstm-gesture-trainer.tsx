@@ -17,6 +17,7 @@ import { TrainingVisualization } from "./training-visualization"
 import { LSTMGestureModel, type LSTMModelConfig } from "@/lib/lstm-gesture-model"
 import { modelManager } from "@/lib/model-manager"
 import * as tf from "@tensorflow/tfjs"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 interface GestureData {
   name: string
@@ -43,6 +44,7 @@ export function LSTMGestureTrainer() {
   const [trainingProgress, setTrainingProgress] = useState(0)
   const [modelAccuracy, setModelAccuracy] = useState(0)
   const [isSaving, setIsSaving] = useState(false)
+  const [isSavingToGitHub, setIsSavingToGitHub] = useState(false)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [epochLoss, setEpochLoss] = useState<number>(0)
   const [learningRate, setLearningRate] = useState<number>(0.001)
@@ -50,10 +52,12 @@ export function LSTMGestureTrainer() {
   const [sampleFrameCount, setSampleFrameCount] = useState(0)
   const [totalSampleFrames] = useState(30)
   const [hiddenUnits, setHiddenUnits] = useState(64)
-  const [isSavingToGitHub, setIsSavingToGitHub] = useState(false)
   const [isModelLoaded, setIsModelLoaded] = useState(false)
   const [tfReady, setTfReady] = useState(false)
   const [detectionActive, setDetectionActive] = useState(false)
+  const [collectionError, setCollectionError] = useState<string | null>(null)
+  const [debugInfo, setDebugInfo] = useState<string>("")
+  const [mediapipeLoaded, setMediapipeLoaded] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -63,6 +67,7 @@ export function LSTMGestureTrainer() {
   const logsEndRef = useRef<HTMLDivElement>(null)
   const lstmModelRef = useRef<LSTMGestureModel | null>(null)
   const collectionTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const collectionIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const { toast } = useToast()
 
   // Initialize TensorFlow.js
@@ -127,7 +132,7 @@ export function LSTMGestureTrainer() {
     setLogs((prevLogs) => [
       ...prevLogs,
       {
-        id: Date.now(),
+        id: Date.now() + Math.random(), // Ensure unique IDs
         type,
         message,
         timestamp: new Date(),
@@ -161,6 +166,7 @@ export function LSTMGestureTrainer() {
                   // Log collection progress periodically
                   if (landmarksRef.current.length % 5 === 0) {
                     addLog("info", `Collecting frames: ${landmarksRef.current.length}/${totalSampleFrames}`)
+                    setDebugInfo(`Collecting frames: ${landmarksRef.current.length}/${totalSampleFrames}`)
                   }
 
                   // Add sample to current gesture after collecting frames
@@ -175,6 +181,12 @@ export function LSTMGestureTrainer() {
                     if (collectionTimeoutRef.current) {
                       clearTimeout(collectionTimeoutRef.current)
                       collectionTimeoutRef.current = null
+                    }
+
+                    // Clear collection interval
+                    if (collectionIntervalRef.current) {
+                      clearInterval(collectionIntervalRef.current)
+                      collectionIntervalRef.current = null
                     }
 
                     toast({
@@ -194,10 +206,11 @@ export function LSTMGestureTrainer() {
           })
 
           await holisticRef.current.initialize()
+          setMediapipeLoaded(true)
           addLog("info", "MediaPipe Holistic initialized successfully")
         }
 
-        if (videoRef.current) {
+        if (videoRef.current && mediapipeLoaded) {
           await holisticRef.current.start(videoRef.current)
           setDetectionActive(true)
           addLog("info", "MediaPipe detection started")
@@ -216,7 +229,7 @@ export function LSTMGestureTrainer() {
         setDetectionActive(false)
       }
     }
-  }, [isCameraActive])
+  }, [isCameraActive, mediapipeLoaded])
 
   // Toggle camera
   const toggleCamera = async () => {
@@ -312,7 +325,7 @@ export function LSTMGestureTrainer() {
     })
   }
 
-  // Start collecting samples
+  // Start collecting samples - FIXED COLLECTION ISSUE
   const startCollecting = () => {
     if (!gestureName) {
       toast({
@@ -341,6 +354,8 @@ export function LSTMGestureTrainer() {
     setSampleFrameCount(0)
     setCollectionProgress(0)
     setIsCollecting(true)
+    setCollectionError(null)
+    setDebugInfo("Starting collection...")
 
     toast({
       title: "Collecting Sample",
@@ -354,6 +369,23 @@ export function LSTMGestureTrainer() {
       clearTimeout(collectionTimeoutRef.current)
     }
 
+    // Set up a collection interval to actively check for hand landmarks
+    if (collectionIntervalRef.current) {
+      clearInterval(collectionIntervalRef.current)
+    }
+
+    // This interval will check if we're making progress in collection
+    collectionIntervalRef.current = setInterval(() => {
+      if (isCollecting) {
+        // If we haven't collected any frames in the last 2 seconds, show a hint
+        if (landmarksRef.current.length === 0) {
+          setDebugInfo("No hand landmarks detected. Make sure your hand is visible in the camera.")
+        } else if (landmarksRef.current.length < 5 && sampleFrameCount < 5) {
+          setDebugInfo(`Only ${landmarksRef.current.length} frames collected. Keep your hand visible.`)
+        }
+      }
+    }, 2000)
+
     collectionTimeoutRef.current = setTimeout(() => {
       if (isCollecting) {
         if (landmarksRef.current.length > 0 && landmarksRef.current.length < totalSampleFrames) {
@@ -366,6 +398,7 @@ export function LSTMGestureTrainer() {
           })
         } else if (landmarksRef.current.length === 0) {
           addLog("error", "Collection failed - no hand gestures detected")
+          setCollectionError("No hand gestures were detected. Please try again.")
           toast({
             title: "Collection Failed",
             description: "No hand gestures were detected. Please try again.",
@@ -377,6 +410,13 @@ export function LSTMGestureTrainer() {
         setSampleFrameCount(0)
         setCollectionProgress(0)
         setIsCollecting(false)
+
+        // Clear collection interval
+        if (collectionIntervalRef.current) {
+          clearInterval(collectionIntervalRef.current)
+          collectionIntervalRef.current = null
+        }
+
         collectionTimeoutRef.current = null
       }
     }, 10000) // 10 second timeout
@@ -727,7 +767,7 @@ export function LSTMGestureTrainer() {
     }
   }
 
-  // Save the trained model to GitHub
+  // Save the trained model to GitHub - using the existing GitHub config
   const saveModelToGitHub = async () => {
     if (!lstmModelRef.current || !isModelLoaded) {
       toast({
@@ -753,7 +793,7 @@ export function LSTMGestureTrainer() {
       // Save LSTM model data
       localStorage.setItem("lstm_model_data", JSON.stringify(modelData))
 
-      // Save to GitHub
+      // Save to GitHub using the existing GitHub configuration
       const saved = await modelManager.saveToGitHub()
 
       if (saved) {
@@ -875,6 +915,15 @@ export function LSTMGestureTrainer() {
                     </div>
                   )}
 
+                  {collectionError && (
+                    <Alert variant="destructive" className="mt-2">
+                      <AlertTitle>Collection Error</AlertTitle>
+                      <AlertDescription>{collectionError}</AlertDescription>
+                    </Alert>
+                  )}
+
+                  {debugInfo && <div className="text-sm text-muted-foreground bg-muted p-2 rounded">{debugInfo}</div>}
+
                   <div className="flex gap-4">
                     <Button
                       onClick={startCollecting}
@@ -925,7 +974,10 @@ export function LSTMGestureTrainer() {
                   {gestures.length > 0 ? (
                     <div className="space-y-2">
                       {gestures.map((gesture, index) => (
-                        <div key={index} className="flex justify-between items-center p-2 bg-background rounded-md">
+                        <div
+                          key={`gesture-${index}-${gesture.name}`}
+                          className="flex justify-between items-center p-2 bg-background rounded-md"
+                        >
                           <span className="font-medium">{gesture.name}</span>
                           <span className="text-sm text-muted-foreground">{gesture.samples} samples</span>
                         </div>
@@ -1088,7 +1140,7 @@ export function LSTMGestureTrainer() {
                     <div className="text-gray-500 italic">Training logs will appear here...</div>
                   ) : (
                     logs.map((log) => (
-                      <div key={log.id} className="flex">
+                      <div key={`log-${log.id}`} className="flex">
                         <span className="text-gray-500 mr-2">[{formatTimestamp(log.timestamp)}]</span>
                         <span
                           className={`

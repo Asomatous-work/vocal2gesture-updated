@@ -20,26 +20,38 @@ export class HolisticDetection {
       if (typeof window === "undefined") return
 
       // Dynamically import MediaPipe to avoid SSR issues
-      const { Holistic } = await import("@mediapipe/holistic")
+      try {
+        // Use dynamic import with proper error handling
+        const mediapipeHolistic = await import("@mediapipe/holistic")
 
-      this.holistic = new Holistic({
-        locateFile: (file: string) => {
-          return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
-        },
-      })
-
-      this.holistic.setOptions({
-        modelComplexity: 1,
-        smoothLandmarks: true,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-      })
-
-      this.holistic.onResults((results: any) => {
-        if (this.options.onResults) {
-          this.options.onResults(results)
+        if (!mediapipeHolistic || !mediapipeHolistic.Holistic) {
+          throw new Error("MediaPipe Holistic module not found or invalid")
         }
-      })
+
+        this.holistic = new mediapipeHolistic.Holistic({
+          locateFile: (file: string) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+          },
+        })
+
+        this.holistic.setOptions({
+          modelComplexity: 1,
+          smoothLandmarks: true,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        })
+
+        this.holistic.onResults((results: any) => {
+          if (this.options.onResults) {
+            this.options.onResults(results)
+          }
+        })
+      } catch (error) {
+        console.error("Error importing MediaPipe Holistic:", error)
+        if (this.options.onError) {
+          this.options.onError(error as Error)
+        }
+      }
     } catch (error) {
       console.error("Error initializing MediaPipe Holistic:", error)
       if (this.options.onError) {
@@ -53,27 +65,38 @@ export class HolisticDetection {
 
     try {
       // Dynamically import Camera to avoid SSR issues
-      const { Camera } = await import("@mediapipe/camera_utils")
+      try {
+        const mediapipeCamera = await import("@mediapipe/camera_utils")
 
-      this.camera = new Camera(videoElement, {
-        onFrame: async () => {
-          if (!this.holistic || !this.isRunning) return
+        if (!mediapipeCamera || !mediapipeCamera.Camera) {
+          throw new Error("MediaPipe Camera module not found or invalid")
+        }
 
-          try {
-            await this.holistic.send({ image: videoElement })
-          } catch (error) {
-            console.error("Error in holistic.send:", error)
-            if (this.options.onError) {
-              this.options.onError(error as Error)
+        this.camera = new mediapipeCamera.Camera(videoElement, {
+          onFrame: async () => {
+            if (!this.holistic || !this.isRunning) return
+
+            try {
+              await this.holistic.send({ image: videoElement })
+            } catch (error) {
+              console.error("Error in holistic.send:", error)
+              if (this.options.onError) {
+                this.options.onError(error as Error)
+              }
             }
-          }
-        },
-        width: 640,
-        height: 480,
-      })
+          },
+          width: 640,
+          height: 480,
+        })
 
-      this.isRunning = true
-      await this.camera.start()
+        this.isRunning = true
+        await this.camera.start()
+      } catch (error) {
+        console.error("Error importing MediaPipe Camera:", error)
+        if (this.options.onError) {
+          this.options.onError(error as Error)
+        }
+      }
     } catch (error) {
       console.error("Error starting camera:", error)
       this.isRunning = false

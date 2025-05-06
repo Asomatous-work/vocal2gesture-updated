@@ -60,11 +60,11 @@
     "zod": "^3.24.1",
     "@emotion/is-prop-valid": "latest",
     "framer-motion": "latest",
-    "@mediapipe/holistic": "latest",
-    "@mediapipe/camera_utils": "latest",
     "@tensorflow/tfjs": "latest",
     "@vercel/blob": "latest",
-    "@octokit/rest": "latest"
+    "@octokit/rest": "latest",
+    "@mediapipe/holistic": "latest",
+    "@mediapipe/camera_utils": "latest"
   },
   "devDependencies": {
     "@types/node": "^22",

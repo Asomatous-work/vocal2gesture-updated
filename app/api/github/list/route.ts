@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server"
+import { type NextRequest, NextResponse } from "next/server"
 import { Octokit } from "@octokit/rest"
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const { owner, repo, branch, path, token } = await request.json()
+    const { owner, repo, path, branch, token } = await request.json()
 
     // Validate required fields
     if (!owner || !repo || !token) {
@@ -18,7 +18,7 @@ export async function POST(request: Request) {
       auth: token,
     })
 
-    // Fetch the directory content
+    // Get the directory content
     const { data } = await octokit.repos.getContent({
       owner,
       repo,
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
       ref: branch || "main",
     })
 
-    // If it's a single file, return it as an array
+    // If we got a single file, not an array, return it as a single-item array
     if (!Array.isArray(data)) {
       return NextResponse.json({
         success: true,
@@ -39,32 +39,21 @@ export async function POST(request: Request) {
       data,
     })
   } catch (error: any) {
-    console.error("GitHub API error:", error)
+    console.error("Error listing GitHub directory:", error)
 
-    // Handle directory not found
+    // Handle 404 specifically
     if (error.status === 404) {
       return NextResponse.json({ error: "Directory not found" }, { status: 404 })
     }
 
-    // Handle rate limiting
-    if (error.status === 403 && error.response?.headers?.["x-ratelimit-remaining"] === "0") {
+    // Handle authentication errors
+    if (error.message?.includes("Bad credentials")) {
       return NextResponse.json(
-        {
-          error: "GitHub API rate limit exceeded",
-          resetAt: new Date(Number.parseInt(error.response.headers["x-ratelimit-reset"]) * 1000).toISOString(),
-        },
-        { status: 429 },
+        { error: "Invalid GitHub token. Please check your token and try again." },
+        { status: 401 },
       )
     }
 
-    // Handle authentication errors
-    if (error.status === 401) {
-      return NextResponse.json({ error: "Invalid GitHub token" }, { status: 401 })
-    }
-
-    return NextResponse.json(
-      { error: error.message || "Failed to list files from GitHub" },
-      { status: error.status || 500 },
-    )
+    return NextResponse.json({ error: `Error listing GitHub directory: ${error.message}` }, { status: 500 })
   }
 }

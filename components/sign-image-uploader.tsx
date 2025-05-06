@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/components/ui/use-toast"
-import { Upload, X, ImageIcon, RefreshCw, Github, Save, AlertTriangle, Key } from "lucide-react"
+import { Upload, X, ImageIcon, RefreshCw, Github, Save, AlertTriangle, Key, FileUp } from "lucide-react"
 import { modelManager } from "@/lib/model-manager"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
 import { Skeleton } from "@/components/ui/skeleton-loader"
@@ -50,14 +50,16 @@ export function SignImageUploader() {
   const [directUploadToGithub, setDirectUploadToGithub] = useState(false)
   const [showGitHubDialog, setShowGitHubDialog] = useState(false)
   const [githubSettings, setGithubSettings] = useState<GitHubSettings>({
-    owner: "",
-    repo: "",
+    owner: "Asomatous-work",
+    repo: "vocal2gesture-updated",
     branch: "main",
     token: "",
   })
   const [tokenError, setTokenError] = useState<string | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const dropZoneRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
 
   // Load images from localStorage on component mount
@@ -82,22 +84,64 @@ export function SignImageUploader() {
       // Load GitHub settings
       const settings = localStorage.getItem("githubSettings")
       if (settings) {
-        const config = JSON.parse(settings)
-        setGithubSettings({
-          owner: config.owner || "",
-          repo: config.repo || "",
-          branch: config.branch || "main",
-          token: config.token || "",
-        })
+        try {
+          const config = JSON.parse(settings)
+          setGithubSettings({
+            owner: config.owner || "Asomatous-work",
+            repo: config.repo || "vocal2gesture-updated",
+            branch: config.branch || "main",
+            token: config.token || "",
+          })
+        } catch (e) {
+          console.error("Error parsing GitHub settings:", e)
+        }
       }
     } catch (error) {
       console.error("Error loading stored images:", error)
     }
   }, [toast])
 
-  // Update the handleFileChange function to include processing state
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
+  // Set up drag and drop event listeners
+  useEffect(() => {
+    const dropZone = dropZoneRef.current
+    if (!dropZone) return
+
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      setIsDragging(true)
+    }
+
+    const handleDragLeave = (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      setIsDragging(false)
+    }
+
+    const handleDrop = (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      setIsDragging(false)
+
+      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+        handleFiles(e.dataTransfer.files)
+      }
+    }
+
+    dropZone.addEventListener("dragover", handleDragOver)
+    dropZone.addEventListener("dragleave", handleDragLeave)
+    dropZone.addEventListener("drop", handleDrop)
+
+    return () => {
+      dropZone.removeEventListener("dragover", handleDragOver)
+      dropZone.removeEventListener("dragleave", handleDragLeave)
+      dropZone.removeEventListener("drop", handleDrop)
+    }
+  }, [])
+
+  // Handle dropped or selected files
+  const handleFiles = (files: FileList) => {
+    const file = files[0]
     if (!file) return
 
     // Check file type
@@ -127,6 +171,14 @@ export function SignImageUploader() {
     reader.onload = (e) => {
       setPreviewUrl(e.target?.result as string)
       setIsProcessingImage(false)
+
+      // If we have a file input, update it to reflect the dropped file
+      if (fileInputRef.current) {
+        // Create a new DataTransfer object
+        const dataTransfer = new DataTransfer()
+        dataTransfer.items.add(file)
+        fileInputRef.current.files = dataTransfer.files
+      }
     }
     reader.onerror = () => {
       toast({
@@ -137,6 +189,14 @@ export function SignImageUploader() {
       setIsProcessingImage(false)
     }
     reader.readAsDataURL(file)
+  }
+
+  // Update the handleFileChange function to include processing state
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (files && files.length > 0) {
+      handleFiles(files)
+    }
   }
 
   const handleUpload = async () => {
@@ -192,7 +252,7 @@ export function SignImageUploader() {
       // If direct upload to GitHub is enabled, skip localStorage and model manager
       if (directUploadToGithub) {
         // Check if we have GitHub settings
-        if (!githubSettings.owner || !githubSettings.repo || !githubSettings.token) {
+        if (!githubSettings.token) {
           setShowGitHubDialog(true)
           // We'll continue the upload after the dialog is closed
         } else {
@@ -217,8 +277,12 @@ export function SignImageUploader() {
             variant: "warning",
           })
 
-          // Show GitHub settings dialog
-          setShowGitHubDialog(true)
+          // Show GitHub settings dialog if token is missing
+          if (!githubSettings.token) {
+            setShowGitHubDialog(true)
+          } else {
+            await saveToGitHubDirectly([newImage])
+          }
         }
       }
 
@@ -293,7 +357,7 @@ export function SignImageUploader() {
       // If storage quota is exceeded, save directly to GitHub
       if (storageQuotaExceeded || directUploadToGithub) {
         // Check if we have GitHub settings
-        if (!githubSettings.owner || !githubSettings.repo || !githubSettings.token) {
+        if (!githubSettings.token) {
           setShowGitHubDialog(true)
           // We'll continue the save after the dialog is closed
           setIsSaving(false)
@@ -315,10 +379,14 @@ export function SignImageUploader() {
           setStorageQuotaExceeded(true)
           setDirectUploadToGithub(true)
 
-          // Show GitHub settings dialog
-          setShowGitHubDialog(true)
-          setIsSaving(false)
-          return
+          // Show GitHub settings dialog if token is missing
+          if (!githubSettings.token) {
+            setShowGitHubDialog(true)
+            setIsSaving(false)
+            return
+          } else {
+            await saveToGitHubDirectly(uploadedImages)
+          }
         }
       }
 
@@ -378,8 +446,8 @@ export function SignImageUploader() {
 
     try {
       // Configure GitHub settings if not already set
-      if (!githubSettings.owner || !githubSettings.repo || !githubSettings.token) {
-        throw new Error("GitHub settings not configured")
+      if (!githubSettings.token) {
+        throw new Error("GitHub token not configured")
       }
 
       // Initialize GitHub in model manager
@@ -498,7 +566,7 @@ export function SignImageUploader() {
     }
 
     // Check if we have GitHub settings
-    if (!githubSettings.owner || !githubSettings.repo || !githubSettings.token) {
+    if (!githubSettings.token) {
       setShowGitHubDialog(true)
       return
     }
@@ -637,6 +705,21 @@ export function SignImageUploader() {
                       Select Image
                     </Button>
                   </div>
+                </div>
+
+                {/* Drag and Drop Zone */}
+                <div
+                  ref={dropZoneRef}
+                  className={`border-2 border-dashed rounded-md p-6 flex flex-col items-center justify-center transition-colors ${
+                    isDragging
+                      ? "border-purple-500 bg-purple-50 dark:bg-purple-900/20"
+                      : "border-gray-300 dark:border-gray-700"
+                  }`}
+                >
+                  <FileUp className="h-10 w-10 text-muted-foreground mb-2" />
+                  <p className="text-sm text-center text-muted-foreground">
+                    Drag and drop an image here, or click the select button above
+                  </p>
                 </div>
 
                 {previewUrl ? (
