@@ -18,6 +18,7 @@ import { LSTMGestureModel, type LSTMModelConfig } from "@/lib/lstm-gesture-model
 import { modelManager } from "@/lib/model-manager"
 import * as tf from "@tensorflow/tfjs"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { LoadingSpinner } from "@/components/ui/loading-spinner"
 
 interface GestureData {
   name: string
@@ -57,7 +58,8 @@ export function LSTMGestureTrainer() {
   const [detectionActive, setDetectionActive] = useState(false)
   const [collectionError, setCollectionError] = useState<string | null>(null)
   const [debugInfo, setDebugInfo] = useState<string>("")
-  const [mediapipeLoaded, setMediapipeLoaded] = useState(false)
+  const [isInitializing, setIsInitializing] = useState(false)
+  const [handDetected, setHandDetected] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -145,18 +147,25 @@ export function LSTMGestureTrainer() {
     if (!isCameraActive) return
 
     const initializeHolistic = async () => {
+      setIsInitializing(true)
       try {
         if (!holisticRef.current) {
           holisticRef.current = new HolisticDetection({
             onResults: (results) => {
               drawResults(results)
 
+              // Check if hands are detected
+              const hasLeftHand = results.leftHandLandmarks && results.leftHandLandmarks.length > 0
+              const hasRightHand = results.rightHandLandmarks && results.rightHandLandmarks.length > 0
+
+              setHandDetected(hasLeftHand || hasRightHand)
+
               // If collecting samples, store the landmarks
               if (isCollecting && gestureName) {
                 const landmarks = extractLandmarks(results)
 
                 // Only add landmarks if we have valid hand data
-                if (results.leftHandLandmarks?.length > 0 || results.rightHandLandmarks?.length > 0) {
+                if (hasLeftHand || hasRightHand) {
                   landmarksRef.current.push(landmarks)
 
                   // Update sample collection progress
@@ -206,11 +215,10 @@ export function LSTMGestureTrainer() {
           })
 
           await holisticRef.current.initialize()
-          setMediapipeLoaded(true)
           addLog("info", "MediaPipe Holistic initialized successfully")
         }
 
-        if (videoRef.current && mediapipeLoaded) {
+        if (videoRef.current) {
           await holisticRef.current.start(videoRef.current)
           setDetectionActive(true)
           addLog("info", "MediaPipe detection started")
@@ -218,6 +226,13 @@ export function LSTMGestureTrainer() {
       } catch (error) {
         console.error("Error initializing MediaPipe:", error)
         addLog("error", `MediaPipe initialization error: ${error}`)
+        toast({
+          title: "MediaPipe Error",
+          description: "Could not initialize hand detection. Please try refreshing the page.",
+          variant: "destructive",
+        })
+      } finally {
+        setIsInitializing(false)
       }
     }
 
@@ -229,7 +244,7 @@ export function LSTMGestureTrainer() {
         setDetectionActive(false)
       }
     }
-  }, [isCameraActive, mediapipeLoaded])
+  }, [isCameraActive])
 
   // Toggle camera
   const toggleCamera = async () => {
@@ -246,6 +261,7 @@ export function LSTMGestureTrainer() {
       }
 
       setIsCameraActive(false)
+      setHandDetected(false)
       addLog("info", "Camera stopped")
     } else {
       // Start the camera
@@ -325,7 +341,7 @@ export function LSTMGestureTrainer() {
     })
   }
 
-  // Start collecting samples - FIXED COLLECTION ISSUE
+  // Start collecting samples
   const startCollecting = () => {
     if (!gestureName) {
       toast({
@@ -346,6 +362,17 @@ export function LSTMGestureTrainer() {
       })
 
       addLog("warning", "Cannot collect sample: Camera is inactive")
+      return
+    }
+
+    if (!handDetected) {
+      toast({
+        title: "No Hand Detected",
+        description: "Please position your hand in the camera view.",
+        variant: "destructive",
+      })
+
+      addLog("warning", "Cannot collect sample: No hand detected")
       return
     }
 
@@ -865,14 +892,22 @@ export function LSTMGestureTrainer() {
                     <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
                       {isCollecting
                         ? `Collecting: ${sampleFrameCount}/${totalSampleFrames}`
-                        : detectionActive
-                          ? "Ready"
-                          : "Initializing..."}
+                        : handDetected
+                          ? "Hand Detected ✓"
+                          : "No Hand Detected"}
                     </div>
                   )}
                   {!isCameraActive && (
                     <div className="absolute inset-0 flex items-center justify-center">
                       <p className="text-white">Camera is off</p>
+                    </div>
+                  )}
+                  {isInitializing && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                      <div className="text-center">
+                        <LoadingSpinner size="lg" />
+                        <p className="text-white mt-2">Initializing MediaPipe...</p>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -885,9 +920,16 @@ export function LSTMGestureTrainer() {
                         ? "bg-red-500 hover:bg-red-600"
                         : "bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
                     }`}
+                    disabled={isInitializing}
                   >
-                    {isCameraActive ? <CameraOff className="mr-2 h-4 w-4" /> : <Camera className="mr-2 h-4 w-4" />}
-                    {isCameraActive ? "Stop Camera" : "Start Camera"}
+                    {isInitializing ? (
+                      <LoadingSpinner className="mr-2" />
+                    ) : isCameraActive ? (
+                      <CameraOff className="mr-2 h-4 w-4" />
+                    ) : (
+                      <Camera className="mr-2 h-4 w-4" />
+                    )}
+                    {isInitializing ? "Initializing..." : isCameraActive ? "Stop Camera" : "Start Camera"}
                   </Button>
                 </div>
 
@@ -927,7 +969,7 @@ export function LSTMGestureTrainer() {
                   <div className="flex gap-4">
                     <Button
                       onClick={startCollecting}
-                      disabled={!isCameraActive || isCollecting || !gestureName || !detectionActive}
+                      disabled={!isCameraActive || isCollecting || !gestureName || !detectionActive || isInitializing}
                       className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 flex-1"
                     >
                       {isCollecting ? (

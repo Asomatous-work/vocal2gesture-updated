@@ -62,9 +62,7 @@
     "framer-motion": "latest",
     "@tensorflow/tfjs": "latest",
     "@vercel/blob": "latest",
-    "@octokit/rest": "latest",
-    "@mediapipe/holistic": "latest",
-    "@mediapipe/camera_utils": "latest"
+    "@octokit/rest": "latest"
   },
   "devDependencies": {
     "@types/node": "^22",
