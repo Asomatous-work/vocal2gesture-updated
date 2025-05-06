@@ -14,6 +14,9 @@ import { Camera, CameraOff, Save, Trash, Play, RefreshCw, Terminal } from "lucid
 import { HolisticDetection } from "@/lib/mediapipe-holistic"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { TrainingVisualization } from "./training-visualization"
+// Import the LoadingSpinner component
+import { LoadingSpinner } from "@/components/ui/loading-spinner"
+import { Skeleton } from "@/components/ui/skeleton-loader"
 
 interface GestureData {
   name: string
@@ -45,6 +48,8 @@ export function GestureTrainer() {
   const [collectionProgress, setCollectionProgress] = useState(0)
   const [sampleFrameCount, setSampleFrameCount] = useState(0)
   const [totalSampleFrames] = useState(30)
+  // Add model initialization state
+  const [isModelInitializing, setIsModelInitializing] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -53,6 +58,7 @@ export function GestureTrainer() {
   const landmarksRef = useRef<any[]>([])
   const logsEndRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
+  const collectionTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Scroll to bottom of logs when new logs are added
   useEffect(() => {
@@ -209,7 +215,7 @@ export function GestureTrainer() {
     addLog("info", `Started collecting sample for gesture "${gestureName}"`)
 
     // Add a safety timeout to prevent getting stuck
-    setTimeout(() => {
+    collectionTimeoutRef.current = setTimeout(() => {
       if (isCollecting) {
         if (landmarksRef.current.length > 0 && landmarksRef.current.length < totalSampleFrames) {
           // If we have some frames but not enough, save what we've got
@@ -251,71 +257,73 @@ export function GestureTrainer() {
     if (!isCameraActive) return
 
     const initializeHolistic = async () => {
-      if (holisticRef.current) {
-        holisticRef.current.stop()
-      }
+      setIsModelInitializing(true)
+      try {
+        if (!holisticRef.current) {
+          holisticRef.current = new HolisticDetection({
+            onResults: (results) => {
+              drawResults(results)
 
-      holisticRef.current = new HolisticDetection({
-        onResults: (results) => {
-          drawResults(results)
+              // If collecting samples, store the landmarks
+              if (isCollecting && gestureName) {
+                const landmarks = extractLandmarks(results)
 
-          // If collecting samples, store the landmarks
-          if (isCollecting && gestureName) {
-            const landmarks = extractLandmarks(results)
+                // Only add landmarks if we have valid hand data
+                if (results.leftHandLandmarks?.length > 0 || results.rightHandLandmarks?.length > 0) {
+                  landmarksRef.current.push(landmarks)
 
-            // Only add landmarks if we have valid hand data
-            if (results.leftHandLandmarks?.length > 0 || results.rightHandLandmarks?.length > 0) {
-              landmarksRef.current.push(landmarks)
+                  // Update sample collection progress
+                  setSampleFrameCount(landmarksRef.current.length)
+                  setCollectionProgress((landmarksRef.current.length / totalSampleFrames) * 100)
 
-              // Update sample collection progress
-              setSampleFrameCount(landmarksRef.current.length)
-              setCollectionProgress((landmarksRef.current.length / totalSampleFrames) * 100)
+                  // Log collection progress periodically
+                  if (landmarksRef.current.length % 5 === 0) {
+                    addLog("info", `Collecting frames: ${landmarksRef.current.length}/${totalSampleFrames}`)
+                  }
 
-              // Log collection progress periodically
-              if (landmarksRef.current.length % 5 === 0) {
-                addLog("info", `Collecting frames: ${landmarksRef.current.length}/${totalSampleFrames}`)
+                  // Add sample to current gesture after collecting frames
+                  if (landmarksRef.current.length >= totalSampleFrames) {
+                    addSampleToGesture()
+                    landmarksRef.current = []
+                    setSampleFrameCount(0)
+                    setCollectionProgress(0)
+                    setIsCollecting(false)
+
+                    // Clear any existing timeout
+                    if (collectionTimeoutRef.current) {
+                      clearTimeout(collectionTimeoutRef.current)
+                      collectionTimeoutRef.current = null
+                    }
+
+                    toast({
+                      title: "Sample Collected",
+                      description: `Added a new sample for "${gestureName}"`,
+                    })
+
+                    addLog("success", `Sample collected for gesture "${gestureName}"`)
+                  }
+                }
               }
-
-              // Add sample to current gesture after collecting frames
-              if (landmarksRef.current.length >= totalSampleFrames) {
-                addSampleToGesture()
-                landmarksRef.current = []
-                setSampleFrameCount(0)
-                setCollectionProgress(0)
-                setIsCollecting(false)
-
-                toast({
-                  title: "Sample Collected",
-                  description: `Added a new sample for "${gestureName}"`,
-                })
-
-                addLog("success", `Sample collected for gesture "${gestureName}"`)
-              }
-            }
-          }
-        },
-        onError: (error) => {
-          console.error("MediaPipe Holistic error:", error)
-          toast({
-            title: "Detection Error",
-            description: "There was an error with the hand detection.",
-            variant: "destructive",
+            },
+            onError: (error) => {
+              console.error("MediaPipe Holistic error:", error)
+              addLog("error", `Detection error: ${error.message || "Unknown error"}`)
+            },
           })
 
-          addLog("error", `Detection error: ${error.message || "Unknown error"}`)
-        },
-      })
-
-      try {
-        await holisticRef.current.initialize()
-
-        if (videoRef.current && isCameraActive) {
-          await holisticRef.current.start(videoRef.current)
+          await holisticRef.current.initialize()
+          addLog("info", "MediaPipe Holistic initialized successfully")
         }
 
-        addLog("info", "MediaPipe Holistic initialized successfully")
+        if (videoRef.current) {
+          await holisticRef.current.start(videoRef.current)
+          addLog("info", "MediaPipe detection started")
+        }
       } catch (error) {
-        addLog("error", `Failed to initialize MediaPipe Holistic: ${error}`)
+        console.error("Error initializing MediaPipe:", error)
+        addLog("error", `MediaPipe initialization error: ${error}`)
+      } finally {
+        setIsModelInitializing(false)
       }
     }
 
@@ -326,7 +334,7 @@ export function GestureTrainer() {
         holisticRef.current.stop()
       }
     }
-  }, [toast, isCollecting, gestureName, totalSampleFrames, isCameraActive])
+  }, [isCameraActive, toast, isCollecting, gestureName, totalSampleFrames])
 
   // Extract relevant landmarks from MediaPipe results
   const extractLandmarks = (results: any) => {
@@ -849,12 +857,21 @@ export function GestureTrainer() {
                   <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
                   {isCameraActive && (
                     <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                      {isCollecting ? `Collecting: ${sampleFrameCount}/${totalSampleFrames}` : "Ready"}
+                      {isCollecting
+                        ? `Collecting: ${sampleFrameCount}/${totalSampleFrames}`
+                        : isModelInitializing
+                          ? "Initializing model..."
+                          : "Ready"}
                     </div>
                   )}
                   {!isCameraActive && (
                     <div className="absolute inset-0 flex items-center justify-center">
                       <p className="text-white">Camera is off</p>
+                    </div>
+                  )}
+                  {isModelInitializing && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                      <LoadingSpinner text="Initializing model..." />
                     </div>
                   )}
                 </div>
@@ -900,7 +917,7 @@ export function GestureTrainer() {
                   <div className="flex gap-4">
                     <Button
                       onClick={startCollecting}
-                      disabled={!isCameraActive || isCollecting || !gestureName}
+                      disabled={!isCameraActive || isCollecting || !gestureName || isModelInitializing}
                       className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 flex-1"
                     >
                       {isCollecting ? (
@@ -944,7 +961,13 @@ export function GestureTrainer() {
               <div className="space-y-6">
                 <div>
                   <h3 className="text-lg font-medium mb-2">Collected Gestures</h3>
-                  {gestures.length > 0 ? (
+                  {isTraining ? (
+                    <div className="space-y-2">
+                      {Array.from({ length: gestures.length || 3 }).map((_, index) => (
+                        <Skeleton key={index} className="h-10 w-full rounded-md" />
+                      ))}
+                    </div>
+                  ) : gestures.length > 0 ? (
                     <div className="space-y-2">
                       {gestures.map((gesture, index) => (
                         <div key={index} className="flex justify-between items-center p-2 bg-background rounded-md">

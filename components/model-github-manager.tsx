@@ -6,8 +6,9 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/components/ui/use-toast"
-import { Github, Save, Download, RefreshCw } from "lucide-react"
+import { Github, Save, Download, RefreshCw, AlertTriangle, Key } from "lucide-react"
 import { modelManager } from "@/lib/model-manager"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 export function ModelGitHubManager() {
   const [owner, setOwner] = useState("")
@@ -16,6 +17,7 @@ export function ModelGitHubManager() {
   const [token, setToken] = useState("")
   const [isSaving, setIsSaving] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [tokenError, setTokenError] = useState<string | null>(null)
   const { toast } = useToast()
 
   // Load GitHub settings from localStorage on component mount
@@ -43,6 +45,13 @@ export function ModelGitHubManager() {
       })
       return
     }
+
+    if (!token) {
+      setTokenError("A personal access token is required for GitHub API access")
+      return
+    }
+
+    setTokenError(null)
 
     try {
       // Save GitHub settings
@@ -73,11 +82,18 @@ export function ModelGitHubManager() {
       return
     }
 
+    if (!token) {
+      setTokenError("A personal access token is required for GitHub API access")
+      return
+    }
+
+    setTokenError(null)
     setIsSaving(true)
 
     try {
       // Save GitHub settings first
-      saveSettings()
+      const config = { owner, repo, branch, token }
+      modelManager.initGitHub(config)
 
       // Save model to GitHub
       const saved = await modelManager.saveToGitHub()
@@ -90,13 +106,19 @@ export function ModelGitHubManager() {
       } else {
         throw new Error("Failed to save to GitHub")
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("GitHub save error:", error)
-      toast({
-        title: "Save Error",
-        description: "There was an error saving your model to GitHub.",
-        variant: "destructive",
-      })
+
+      // Check for specific error messages
+      if (error.message?.includes("Invalid GitHub token")) {
+        setTokenError("Invalid GitHub token. Please check your token and try again.")
+      } else {
+        toast({
+          title: "Save Error",
+          description: error.message || "There was an error saving your model to GitHub.",
+          variant: "destructive",
+        })
+      }
     } finally {
       setIsSaving(false)
     }
@@ -112,11 +134,18 @@ export function ModelGitHubManager() {
       return
     }
 
+    if (!token) {
+      setTokenError("A personal access token is required for GitHub API access")
+      return
+    }
+
+    setTokenError(null)
     setIsLoading(true)
 
     try {
       // Save GitHub settings first
-      saveSettings()
+      const config = { owner, repo, branch, token }
+      modelManager.initGitHub(config)
 
       // Load model from GitHub
       const loaded = await modelManager.loadFromGitHub()
@@ -127,15 +156,24 @@ export function ModelGitHubManager() {
           description: "Your model has been loaded from GitHub.",
         })
       } else {
-        throw new Error("Failed to load from GitHub")
+        toast({
+          title: "No Data Found",
+          description: "No existing data was found in the repository. This is normal for new repositories.",
+        })
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("GitHub load error:", error)
-      toast({
-        title: "Load Error",
-        description: "There was an error loading your model from GitHub.",
-        variant: "destructive",
-      })
+
+      // Check for specific error messages
+      if (error.message?.includes("Invalid GitHub token")) {
+        setTokenError("Invalid GitHub token. Please check your token and try again.")
+      } else {
+        toast({
+          title: "Load Error",
+          description: error.message || "There was an error loading your model from GitHub.",
+          variant: "destructive",
+        })
+      }
     } finally {
       setIsLoading(false)
     }
@@ -151,6 +189,14 @@ export function ModelGitHubManager() {
         <CardDescription>Save and load your models from GitHub for cross-device usage</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {tokenError && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Token Error</AlertTitle>
+            <AlertDescription>{tokenError}</AlertDescription>
+          </Alert>
+        )}
+
         <div className="grid grid-cols-1 gap-4">
           <div className="space-y-2">
             <Label htmlFor="owner">Owner/Organization</Label>
@@ -175,14 +221,31 @@ export function ModelGitHubManager() {
             <Input id="branch" placeholder="e.g., main" value={branch} onChange={(e) => setBranch(e.target.value)} />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="token">Personal Access Token (Optional)</Label>
+            <Label htmlFor="token" className="flex items-center">
+              <Key className="mr-1 h-4 w-4" />
+              Personal Access Token (Required)
+            </Label>
             <Input
               id="token"
               type="password"
-              placeholder="For private repositories"
+              placeholder="GitHub personal access token with repo scope"
               value={token}
-              onChange={(e) => setToken(e.target.value)}
+              onChange={(e) => {
+                setToken(e.target.value)
+                setTokenError(null)
+              }}
             />
+            <p className="text-xs text-muted-foreground mt-1">
+              Create a token with 'repo' scope at{" "}
+              <a
+                href="https://github.com/settings/tokens/new"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-500 hover:underline"
+              >
+                github.com/settings/tokens/new
+              </a>
+            </p>
           </div>
         </div>
       </CardContent>

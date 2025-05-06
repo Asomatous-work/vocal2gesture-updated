@@ -11,6 +11,7 @@ class ModelManager {
   private signImages: { word: string; url: string; id: string }[] = []
   private githubConfig: { owner: string; repo: string; branch: string; token?: string } | null = null
   private isInitialized = false
+  private storageQuotaExceeded = false
 
   constructor() {
     // Only initialize from localStorage when in browser environment
@@ -39,7 +40,12 @@ class ModelManager {
     this.githubConfig = config
 
     if (typeof window !== "undefined") {
-      localStorage.setItem("githubSettings", JSON.stringify(config))
+      try {
+        localStorage.setItem("githubSettings", JSON.stringify(config))
+      } catch (error) {
+        console.error("Error saving GitHub config:", error)
+        this.storageQuotaExceeded = true
+      }
     }
   }
 
@@ -66,8 +72,10 @@ class ModelManager {
       })
     }
 
-    // Save to localStorage
-    this.saveToLocalStorage()
+    // Only save to localStorage if we haven't exceeded quota
+    if (!this.storageQuotaExceeded) {
+      this.saveToLocalStorage()
+    }
   }
 
   public saveGesture(gesture: GestureData) {
@@ -93,8 +101,10 @@ class ModelManager {
       })
     }
 
-    // Save to localStorage
-    this.saveToLocalStorage()
+    // Only save to localStorage if we haven't exceeded quota
+    if (!this.storageQuotaExceeded) {
+      this.saveToLocalStorage()
+    }
   }
 
   // Add a sign image
@@ -129,8 +139,10 @@ class ModelManager {
       })
     }
 
-    // Save to localStorage
-    this.saveToLocalStorage()
+    // Only save to localStorage if we haven't exceeded quota
+    if (!this.storageQuotaExceeded) {
+      this.saveToLocalStorage()
+    }
   }
 
   // Get all gestures
@@ -151,16 +163,38 @@ class ModelManager {
     return this.signImages
   }
 
+  // Check if storage quota is exceeded
+  public isStorageQuotaExceeded(): boolean {
+    return this.storageQuotaExceeded
+  }
+
   // Save model to localStorage
   public saveToLocalStorage() {
     if (typeof window === "undefined") return false
 
     try {
+      // Try to save just the essential data first
+      const essentialData = this.gestures.map((gesture) => ({
+        name: gesture.name,
+        samples: gesture.samples,
+        // Don't include full landmarks array, just count
+        landmarkCount: gesture.landmarks.length,
+        // Include only image count, not the actual images
+        imageCount: gesture.images ? gesture.images.length : 0,
+      }))
+
+      localStorage.setItem("gestureModelMeta", JSON.stringify(essentialData))
+
+      // Now try to save the full data
       localStorage.setItem("gestureModel", JSON.stringify(this.gestures))
       localStorage.setItem("signImages", JSON.stringify(this.signImages))
+
+      // Reset quota exceeded flag if we succeeded
+      this.storageQuotaExceeded = false
       return true
     } catch (error) {
       console.error("Error saving to localStorage:", error)
+      this.storageQuotaExceeded = true
       return false
     }
   }
@@ -203,16 +237,12 @@ class ModelManager {
     }
   }
 
-  // Save model to GitHub
+  // Save model to GitHub - now using real GitHub API
   public async saveToGitHub() {
     if (typeof window === "undefined") return false
-    if (!this.githubConfig) {
-      // Set default GitHub config if not already set
-      this.initGitHub({
-        owner: "user",
-        repo: "vocal2gestures",
-        branch: "main",
-      })
+    if (!this.githubConfig || !this.githubConfig.token) {
+      console.error("GitHub configuration or token missing")
+      return false
     }
 
     try {
@@ -226,13 +256,38 @@ class ModelManager {
         },
       }
 
-      // In a real implementation, we would use the GitHub API
-      // For now, we'll just save to localStorage with a GitHub key
-      localStorage.setItem("github_backup", JSON.stringify(data))
-      console.log("Saved to GitHub (simulated):", this.githubConfig)
+      // Convert to JSON string
+      const content = JSON.stringify(data, null, 2)
 
-      // Simulate API call delay
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+      // Save to GitHub using our API route
+      const response = await fetch("/api/github/save", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          owner: this.githubConfig.owner,
+          repo: this.githubConfig.repo,
+          branch: this.githubConfig.branch || "main",
+          path: "vocal2gestures-data.json",
+          content,
+          message: "Update gesture data",
+          token: this.githubConfig.token,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || "Failed to save to GitHub")
+      }
+
+      const result = await response.json()
+      console.log("Saved to GitHub successfully:", result)
+
+      // If we have images, save them separately
+      if (this.signImages.length > 0) {
+        await this.saveImagesToGitHub()
+      }
 
       return true
     } catch (error) {
@@ -241,18 +296,110 @@ class ModelManager {
     }
   }
 
-  // Load model from GitHub
-  public async loadFromGitHub() {
-    if (typeof window === "undefined") return false
-    if (!this.githubConfig) return false
+  // Save images to GitHub
+  private async saveImagesToGitHub() {
+    if (!this.githubConfig || !this.githubConfig.token || this.signImages.length === 0) {
+      return false
+    }
 
     try {
-      // In a real implementation, we would use the GitHub API
-      // For now, we'll just load from localStorage with a GitHub key
-      const githubData = localStorage.getItem("github_backup")
+      // Create a directory for images if needed
+      const imagesDir = "images"
 
-      if (githubData) {
-        const data = JSON.parse(githubData)
+      // Save each image individually
+      for (const image of this.signImages) {
+        // Skip images that don't have a data URL
+        if (!image.url.startsWith("data:")) continue
+
+        // Extract the base64 data and determine the file extension
+        let fileExtension = "png"
+        let base64Data = image.url
+
+        if (image.url.startsWith("data:image/")) {
+          const matches = image.url.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/)
+          if (matches && matches.length === 3) {
+            fileExtension = matches[1]
+            base64Data = matches[2]
+          } else {
+            // If we can't parse the data URL, skip this image
+            continue
+          }
+        }
+
+        // Create a filename based on the word and ID
+        const filename = `${image.word.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_${image.id}.${fileExtension}`
+        const path = `${imagesDir}/${filename}`
+
+        // Save the image to GitHub
+        const response = await fetch("/api/github/save", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            owner: this.githubConfig.owner,
+            repo: this.githubConfig.repo,
+            branch: this.githubConfig.branch || "main",
+            path,
+            content: base64Data,
+            message: `Add sign image for ${image.word}`,
+            token: this.githubConfig.token,
+          }),
+        })
+
+        if (!response.ok) {
+          const errorData = await response.json()
+          console.error(`Failed to save image ${filename}:`, errorData.error)
+          // Continue with other images even if one fails
+        }
+      }
+
+      return true
+    } catch (error) {
+      console.error("Error saving images to GitHub:", error)
+      return false
+    }
+  }
+
+  // Load model from GitHub - now using real GitHub API
+  public async loadFromGitHub() {
+    if (typeof window === "undefined") return false
+    if (!this.githubConfig || !this.githubConfig.token) {
+      console.error("GitHub configuration or token missing")
+      return false
+    }
+
+    try {
+      // Fetch the data file from GitHub
+      const response = await fetch("/api/github/fetch", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          owner: this.githubConfig.owner,
+          repo: this.githubConfig.repo,
+          branch: this.githubConfig.branch || "main",
+          path: "vocal2gestures-data.json",
+          token: this.githubConfig.token,
+        }),
+      })
+
+      // If the file doesn't exist yet, that's okay
+      if (response.status === 404) {
+        console.log("No data file found on GitHub yet")
+        return false
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || "Failed to load from GitHub")
+      }
+
+      const result = await response.json()
+
+      if (result.success && result.data.content) {
+        const data = JSON.parse(result.data.content)
 
         if (data.gestures) {
           this.gestures = data.gestures
@@ -262,7 +409,10 @@ class ModelManager {
           this.signImages = data.signImages
         }
 
-        // Save to localStorage for consistency
+        // Try to load images from GitHub
+        await this.loadImagesFromGitHub()
+
+        // Save to localStorage for offline use
         this.saveToLocalStorage()
 
         return true
@@ -271,6 +421,94 @@ class ModelManager {
       return false
     } catch (error) {
       console.error("Error loading from GitHub:", error)
+      return false
+    }
+  }
+
+  // Load images from GitHub
+  private async loadImagesFromGitHub() {
+    if (!this.githubConfig || !this.githubConfig.token) {
+      return false
+    }
+
+    try {
+      // List files in the images directory
+      const response = await fetch("/api/github/list", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          owner: this.githubConfig.owner,
+          repo: this.githubConfig.repo,
+          branch: this.githubConfig.branch || "main",
+          path: "images",
+          token: this.githubConfig.token,
+        }),
+      })
+
+      // If the directory doesn't exist yet, that's okay
+      if (response.status === 404) {
+        console.log("No images directory found on GitHub yet")
+        return false
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || "Failed to list images from GitHub")
+      }
+
+      const result = await response.json()
+
+      if (result.success && Array.isArray(result.data)) {
+        // Process each image file
+        for (const file of result.data) {
+          // Skip directories
+          if (file.type !== "file") continue
+
+          // Extract the word from the filename
+          const filenameMatch = file.name.match(/^([^_]+)_([^.]+)\.([a-zA-Z0-9]+)$/)
+          if (!filenameMatch) continue
+
+          const word = filenameMatch[1].replace(/_/g, " ")
+          const id = filenameMatch[2]
+
+          // Fetch the raw content URL
+          const imageUrl = file.download_url
+
+          // Add to our sign images if it doesn't exist already
+          const existingIndex = this.signImages.findIndex((img) => img.id === id)
+          if (existingIndex === -1) {
+            this.signImages.push({
+              id,
+              word,
+              url: imageUrl,
+            })
+
+            // Also add to gesture data for slideshow
+            const gestureIndex = this.gestures.findIndex((g) => g.name === word)
+            if (gestureIndex >= 0) {
+              if (!this.gestures[gestureIndex].images) {
+                this.gestures[gestureIndex].images = []
+              }
+              if (!this.gestures[gestureIndex].images.includes(imageUrl)) {
+                this.gestures[gestureIndex].images.push(imageUrl)
+              }
+            } else {
+              this.gestures.push({
+                name: word,
+                landmarks: [],
+                samples: 0,
+                images: [imageUrl],
+              })
+            }
+          }
+        }
+      }
+
+      return true
+    } catch (error) {
+      console.error("Error loading images from GitHub:", error)
       return false
     }
   }
@@ -285,6 +523,7 @@ class ModelManager {
     try {
       localStorage.removeItem("gestureModel")
       localStorage.removeItem("signImages")
+      this.storageQuotaExceeded = false
       return true
     } catch (error) {
       console.error("Error clearing data:", error)

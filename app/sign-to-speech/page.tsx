@@ -6,13 +6,16 @@ import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
-import { Camera, CameraOff, Volume2, VolumeX, RefreshCw, History } from "lucide-react"
+import { Camera, CameraOff, Volume2, VolumeX, History, Loader2 } from "lucide-react"
 import { HolisticDetection } from "@/lib/mediapipe-holistic"
 import { modelManager } from "@/lib/model-manager"
 import { LSTMGestureModel } from "@/lib/lstm-gesture-model"
 import { GestureConfidenceVisualizer } from "@/components/gesture-confidence-visualizer"
 import { DetectionHistoryLog } from "@/components/detection-history-log"
 import { GestureRecognitionDelaySlider } from "@/components/gesture-recognition-delay-slider"
+// Import the LoadingSpinner component
+import { LoadingSpinner } from "@/components/ui/loading-spinner"
+import { Skeleton } from "@/components/ui/skeleton-loader"
 
 interface DetectedGesture {
   name: string
@@ -31,6 +34,8 @@ export default function SignToSpeechPage() {
   const [recognitionDelay, setRecognitionDelay] = useState(500)
   const [showDetectionHistory, setShowDetectionHistory] = useState(false)
   const [lastDetectionTime, setLastDetectionTime] = useState(0)
+  // Add a camera initialization state
+  const [isCameraInitializing, setIsCameraInitializing] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -115,6 +120,7 @@ export default function SignToSpeechPage() {
   }, [toast])
 
   // Toggle camera
+  // Update the toggleCamera function to include initialization state
   const toggleCamera = async () => {
     if (isCameraActive) {
       // Stop the camera
@@ -131,6 +137,7 @@ export default function SignToSpeechPage() {
       setIsRecognizing(false)
     } else {
       // Start the camera
+      setIsCameraInitializing(true)
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
@@ -161,7 +168,7 @@ export default function SignToSpeechPage() {
         })
 
         // Initialize holistic detection
-        initializeHolistic()
+        await initializeHolistic()
 
         // Auto-start recognition
         setIsRecognizing(true)
@@ -172,6 +179,8 @@ export default function SignToSpeechPage() {
           description: "Could not access your camera. Please check permissions.",
           variant: "destructive",
         })
+      } finally {
+        setIsCameraInitializing(false)
       }
     }
   }
@@ -536,27 +545,30 @@ export default function SignToSpeechPage() {
                   className={`absolute inset-0 w-full h-full object-cover ${isCameraActive ? "opacity-100" : "opacity-0"}`}
                 />
                 <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+                {/* Replace the camera view loading state */}
                 {!isCameraActive && !isLoading && (
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <Button
-                      onClick={toggleCamera}
-                      className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
-                    >
-                      <Camera className="mr-2 h-4 w-4" />
-                      Start Camera
-                    </Button>
+                    {isCameraInitializing ? (
+                      <LoadingSpinner text="Initializing camera..." />
+                    ) : (
+                      <Button
+                        onClick={toggleCamera}
+                        className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
+                      >
+                        <Camera className="mr-2 h-4 w-4" />
+                        Start Camera
+                      </Button>
+                    )}
                   </div>
                 )}
                 {isLoading && (
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="flex flex-col items-center">
-                      <RefreshCw className="h-8 w-8 animate-spin text-white mb-2" />
-                      <p className="text-white">Loading models...</p>
-                    </div>
+                    <LoadingSpinner size="lg" text="Loading models..." />
                   </div>
                 )}
               </div>
               <div className="p-4 flex flex-wrap gap-2 md:gap-4 justify-between items-center">
+                {/* Update the camera toggle button to show loading state */}
                 <Button
                   onClick={toggleCamera}
                   className={`${
@@ -564,10 +576,24 @@ export default function SignToSpeechPage() {
                       ? "bg-red-500 hover:bg-red-600"
                       : "bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
                   }`}
-                  disabled={isLoading}
+                  disabled={isLoading || isCameraInitializing}
                 >
-                  {isCameraActive ? <CameraOff className="mr-2 h-4 w-4" /> : <Camera className="mr-2 h-4 w-4" />}
-                  {isCameraActive ? "Stop Camera" : "Start Camera"}
+                  {isCameraInitializing ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Initializing...
+                    </>
+                  ) : isCameraActive ? (
+                    <>
+                      <CameraOff className="mr-2 h-4 w-4" />
+                      Stop Camera
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="mr-2 h-4 w-4" />
+                      Start Camera
+                    </>
+                  )}
                 </Button>
 
                 <GestureRecognitionDelaySlider
@@ -592,8 +618,21 @@ export default function SignToSpeechPage() {
               <CardDescription>Detected gestures and confidence scores</CardDescription>
             </CardHeader>
             <CardContent>
+              {/* Update the Recognition Results card with a skeleton loader when the camera is active but no gesture is recognized */}
               {showDetectionHistory ? (
                 <DetectionHistoryLog history={detectionHistory} />
+              ) : isCameraActive &&
+                !recognizedGesture &&
+                confidenceScores &&
+                Object.keys(confidenceScores).length === 0 ? (
+                <div className="space-y-4">
+                  <Skeleton className="h-24 w-full" />
+                  <div className="space-y-2">
+                    <Skeleton className="h-8 w-full" />
+                    <Skeleton className="h-8 w-2/3" />
+                    <Skeleton className="h-8 w-3/4" />
+                  </div>
+                </div>
               ) : (
                 <GestureConfidenceVisualizer
                   recognizedGesture={recognizedGesture}

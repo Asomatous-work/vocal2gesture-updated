@@ -10,6 +10,7 @@ import { useToast } from "@/components/ui/use-toast"
 import { Github, Save, Trash2, RefreshCw, Upload, Download } from "lucide-react"
 import { modelManager } from "@/lib/model-manager"
 import Image from "next/image"
+import { Skeleton } from "@/components/ui/skeleton-loader"
 
 export default function ModelManagementPage() {
   const [owner, setOwner] = useState("")
@@ -20,12 +21,17 @@ export default function ModelManagementPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [gestures, setGestures] = useState<{ name: string; samples: number }[]>([])
   const [signImages, setSignImages] = useState<{ word: string; url: string }[]>([])
+  // Add a loading state for model management operations
+  const [isInitializing, setIsInitializing] = useState(true)
 
   const { toast } = useToast()
 
   // Load settings and models on component mount
+  // Update the useEffect to include initialization state
   useEffect(() => {
     try {
+      setIsInitializing(true)
+
       // Load GitHub settings
       const settings = localStorage.getItem("githubSettings")
       if (settings) {
@@ -49,6 +55,8 @@ export default function ModelManagementPage() {
       setSignImages(images)
     } catch (error) {
       console.error("Error loading settings:", error)
+    } finally {
+      setIsInitializing(false)
     }
   }, [])
 
@@ -220,150 +228,178 @@ export default function ModelManagementPage() {
         </p>
       </motion.div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
-        {/* GitHub Settings */}
-        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5 }}>
-          <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-purple-50 to-pink-50 dark:from-gray-800 dark:to-gray-900">
-            <CardHeader>
-              <div className="flex items-center">
-                <Github className="mr-2 h-5 w-5" />
-                <CardTitle>GitHub Integration</CardTitle>
-              </div>
-              <CardDescription>Configure GitHub repository for cross-device model storage</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 gap-2">
-                  <Label htmlFor="owner">Repository Owner</Label>
-                  <Input
-                    id="owner"
-                    placeholder="e.g., your-username"
-                    value={owner}
-                    onChange={(e) => setOwner(e.target.value)}
-                  />
+      {/* Add loading state for when the page is initializing */}
+      {isInitializing ? (
+        // Show skeleton loading UI
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
+          <Skeleton className="h-[400px] w-full rounded-lg" />
+          <Skeleton className="h-[400px] w-full rounded-lg" />
+        </div>
+      ) : (
+        // Render the actual content
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
+          {/* GitHub Settings */}
+          <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5 }}>
+            <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-purple-50 to-pink-50 dark:from-gray-800 dark:to-gray-900">
+              <CardHeader>
+                <div className="flex items-center">
+                  <Github className="mr-2 h-5 w-5" />
+                  <CardTitle>GitHub Integration</CardTitle>
                 </div>
+                <CardDescription>Configure GitHub repository for cross-device model storage</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 gap-2">
+                    <Label htmlFor="owner">Repository Owner</Label>
+                    <Input
+                      id="owner"
+                      placeholder="e.g., your-username"
+                      value={owner}
+                      onChange={(e) => setOwner(e.target.value)}
+                    />
+                  </div>
 
-                <div className="grid grid-cols-1 gap-2">
-                  <Label htmlFor="repo">Repository Name</Label>
-                  <Input
-                    id="repo"
-                    placeholder="e.g., vocal2gestures-models"
-                    value={repo}
-                    onChange={(e) => setRepo(e.target.value)}
-                  />
-                </div>
+                  <div className="grid grid-cols-1 gap-2">
+                    <Label htmlFor="repo">Repository Name</Label>
+                    <Input
+                      id="repo"
+                      placeholder="e.g., vocal2gestures-models"
+                      value={repo}
+                      onChange={(e) => setRepo(e.target.value)}
+                    />
+                  </div>
 
-                <div className="grid grid-cols-1 gap-2">
-                  <Label htmlFor="branch">Branch (Optional)</Label>
-                  <Input id="branch" placeholder="main" value={branch} onChange={(e) => setBranch(e.target.value)} />
-                </div>
+                  <div className="grid grid-cols-1 gap-2">
+                    <Label htmlFor="branch">Branch (Optional)</Label>
+                    <Input id="branch" placeholder="main" value={branch} onChange={(e) => setBranch(e.target.value)} />
+                  </div>
 
-                <Button onClick={saveSettings} className="w-full">
-                  <Save className="mr-2 h-4 w-4" />
-                  Save Settings
-                </Button>
-
-                <div className="grid grid-cols-2 gap-4 mt-4">
-                  <Button onClick={saveToGitHub} variant="outline" disabled={isSaving}>
-                    {isSaving ? (
-                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Upload className="mr-2 h-4 w-4" />
-                    )}
-                    {isSaving ? "Saving..." : "Save to GitHub"}
+                  <Button onClick={saveSettings} className="w-full">
+                    <Save className="mr-2 h-4 w-4" />
+                    Save Settings
                   </Button>
 
-                  <Button onClick={loadFromGitHub} variant="outline" disabled={isLoading}>
-                    {isLoading ? (
-                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Download className="mr-2 h-4 w-4" />
-                    )}
-                    {isLoading ? "Loading..." : "Load from GitHub"}
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
+                  <div className="grid grid-cols-2 gap-4 mt-4">
+                    <Button onClick={saveToGitHub} variant="outline" disabled={isSaving}>
+                      {isSaving ? (
+                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Upload className="mr-2 h-4 w-4" />
+                      )}
+                      {isSaving ? "Saving..." : "Save to GitHub"}
+                    </Button>
 
-        {/* Model Summary */}
-        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5 }}>
-          <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-pink-50 to-purple-50 dark:from-gray-900 dark:to-gray-800">
-            <CardHeader>
-              <CardTitle>Model Summary</CardTitle>
-              <CardDescription>Overview of your trained gesture models and sign images</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-6">
-                {/* Gesture Models */}
-                <div>
-                  <h3 className="text-lg font-medium mb-2">Gesture Models</h3>
-                  {gestures.length > 0 ? (
-                    <div className="bg-background rounded-lg p-4">
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="font-medium">Gesture Name</div>
-                        <div className="font-medium">Samples</div>
+                    <Button onClick={loadFromGitHub} variant="outline" disabled={isLoading}>
+                      {isLoading ? (
+                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="mr-2 h-4 w-4" />
+                      )}
+                      {isLoading ? "Loading..." : "Load from GitHub"}
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* Model Summary */}
+          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5 }}>
+            <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-pink-50 to-purple-50 dark:from-gray-900 dark:to-gray-800">
+              <CardHeader>
+                <CardTitle>Model Summary</CardTitle>
+                <CardDescription>Overview of your trained gesture models and sign images</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-6">
+                  {/* Update the gesture models section to show loading state during operations */}
+                  <div>
+                    <h3 className="text-lg font-medium mb-2">Gesture Models</h3>
+                    {isLoading || isSaving ? (
+                      // Loading state
+                      <div className="space-y-2">
+                        {Array.from({ length: 3 }).map((_, index) => (
+                          <Skeleton key={index} className="h-10 w-full rounded-md" />
+                        ))}
                       </div>
-                      <div className="mt-2 space-y-2">
-                        {gestures.map((gesture, index) => (
-                          <div
-                            key={index}
-                            className="grid grid-cols-2 gap-2 py-1 border-t border-gray-100 dark:border-gray-800"
-                          >
-                            <div>{gesture.name}</div>
-                            <div>{gesture.samples}</div>
+                    ) : gestures.length > 0 ? (
+                      // Normal state with data
+                      <div className="bg-background rounded-lg p-4">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="font-medium">Gesture Name</div>
+                          <div className="font-medium">Samples</div>
+                        </div>
+                        <div className="mt-2 space-y-2">
+                          {gestures.map((gesture, index) => (
+                            <div
+                              key={index}
+                              className="grid grid-cols-2 gap-2 py-1 border-t border-gray-100 dark:border-gray-800"
+                            >
+                              <div>{gesture.name}</div>
+                              <div>{gesture.samples}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      // Empty state
+                      <p className="text-muted-foreground">No gesture models available</p>
+                    )}
+                  </div>
+
+                  {/* Update the sign images section with loading states */}
+                  <div>
+                    <h3 className="text-lg font-medium mb-2">Sign Language Images</h3>
+                    {isLoading || isSaving ? (
+                      // Loading state for sign images
+                      <div className="grid grid-cols-3 gap-2">
+                        {Array.from({ length: 6 }).map((_, index) => (
+                          <Skeleton key={index} className="aspect-square rounded-md" />
+                        ))}
+                      </div>
+                    ) : signImages.length > 0 ? (
+                      // Normal state with images
+                      <div className="grid grid-cols-3 gap-2">
+                        {signImages.map((image, index) => (
+                          <div key={index} className="aspect-square rounded-md overflow-hidden bg-muted relative group">
+                            <img
+                              src={image.url || "/placeholder.svg"}
+                              alt={image.word}
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                              <p className="text-white font-medium text-center px-2">{image.word}</p>
+                            </div>
                           </div>
                         ))}
                       </div>
-                    </div>
-                  ) : (
-                    <p className="text-muted-foreground">No gesture models available</p>
-                  )}
-                </div>
+                    ) : (
+                      // Empty state
+                      <p className="text-muted-foreground">No sign language images available</p>
+                    )}
+                  </div>
 
-                {/* Sign Images */}
-                <div>
-                  <h3 className="text-lg font-medium mb-2">Sign Language Images</h3>
-                  {signImages.length > 0 ? (
-                    <div className="grid grid-cols-3 gap-2">
-                      {signImages.map((image, index) => (
-                        <div key={index} className="aspect-square rounded-md overflow-hidden bg-muted relative group">
-                          <img
-                            src={image.url || "/placeholder.svg"}
-                            alt={image.word}
-                            className="w-full h-full object-cover"
-                          />
-                          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <p className="text-white font-medium text-center px-2">{image.word}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-muted-foreground">No sign language images available</p>
-                  )}
+                  {/* Delete All */}
+                  <Button
+                    onClick={deleteAllModels}
+                    variant="destructive"
+                    className="w-full"
+                    disabled={isDeleting || (gestures.length === 0 && signImages.length === 0)}
+                  >
+                    {isDeleting ? (
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="mr-2 h-4 w-4" />
+                    )}
+                    {isDeleting ? "Deleting..." : "Delete All Models"}
+                  </Button>
                 </div>
-
-                {/* Delete All */}
-                <Button
-                  onClick={deleteAllModels}
-                  variant="destructive"
-                  className="w-full"
-                  disabled={isDeleting || (gestures.length === 0 && signImages.length === 0)}
-                >
-                  {isDeleting ? (
-                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="mr-2 h-4 w-4" />
-                  )}
-                  {isDeleting ? "Deleting..." : "Delete All Models"}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
-      </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        </div>
+      )}
     </div>
   )
 }

@@ -1,13 +1,30 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Menu, X } from "lucide-react"
+import { usePathname } from "next/navigation"
 
 export function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+
+  // Add a loading state for route transitions
+  const [isRouteChanging, setIsRouteChanging] = useState(false)
+  const pathname = usePathname()
+
+  // Add effect to handle route change animations
+  useEffect(() => {
+    setIsRouteChanging(true)
+
+    // Simulate a short delay to show loading state
+    const timer = setTimeout(() => {
+      setIsRouteChanging(false)
+    }, 500)
+
+    return () => clearTimeout(timer)
+  }, [pathname])
 
   const toggleMenu = () => {
     setIsMenuOpen(!isMenuOpen)
@@ -15,6 +32,10 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      {/* Add loading indicator to the navbar for route changes */}
+      {isRouteChanging && (
+        <div className="fixed top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 via-pink-500 to-purple-500 animate-progress z-50" />
+      )}
       <div className="container flex h-16 items-center justify-between">
         <div className="flex items-center gap-2">
           <Link href="/" className="flex items-center gap-2">
@@ -100,6 +121,30 @@ export function Navbar() {
           </div>
         </div>
       )}
+      {/* Also add a global style for the progress animation */}
+      <style jsx global>{`
+        @keyframes progress {
+          0% {
+            width: 0%;
+            opacity: 1;
+          }
+          50% {
+            width: 50%;
+            opacity: 1;
+          }
+          90% {
+            width: 90%;
+            opacity: 1;
+          }
+          100% {
+            width: 100%;
+            opacity: 0;
+          }
+        }
+        .animate-progress {
+          animation: progress 0.8s ease-in-out;
+        }
+      `}</style>
     </header>
   )
 }

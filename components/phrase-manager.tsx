@@ -1,12 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Plus, X, Save, ArrowUpDown, Edit, Trash2 } from "lucide-react"
+import { Plus, X, Save, ArrowUpDown, Edit, Trash2, Loader2 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
+import { Skeleton } from "@/components/ui/skeleton-loader"
 
 export interface Phrase {
   id: string
@@ -28,6 +29,17 @@ export function PhraseManager({ availableGestures, onSavePhrases, initialPhrases
   const [selectedGestures, setSelectedGestures] = useState<string[]>([])
   const [editingPhraseId, setEditingPhraseId] = useState<string | null>(null)
   const { toast } = useToast()
+
+  // Add loading states
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
+
+  // Update useEffect to include loading state
+  useEffect(() => {
+    setIsLoading(true)
+    setPhrases(initialPhrases || [])
+    setTimeout(() => setIsLoading(false), 500) // Short timeout for UX
+  }, [initialPhrases])
 
   const resetForm = () => {
     setNewPhraseName("")
@@ -135,6 +147,15 @@ export function PhraseManager({ availableGestures, onSavePhrases, initialPhrases
       title: "Phrase Deleted",
       description: "The phrase has been deleted.",
     })
+  }
+
+  const handleSave = () => {
+    setIsSaving(true)
+    // Simulate a small delay for better UX
+    setTimeout(() => {
+      onSavePhrases(phrases)
+      setIsSaving(false)
+    }, 800)
   }
 
   return (
@@ -260,7 +281,16 @@ export function PhraseManager({ availableGestures, onSavePhrases, initialPhrases
           <CardDescription>Manage your saved gesture sequences</CardDescription>
         </CardHeader>
         <CardContent>
-          {phrases.length > 0 ? (
+          {isLoading ? (
+            <div className="space-y-4">
+              <Skeleton className="h-12 w-2/3" />
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <Skeleton key={index} className="h-24 w-full rounded-md" />
+                ))}
+              </div>
+            </div>
+          ) : phrases.length > 0 ? (
             <div className="space-y-3">
               {phrases.map((phrase) => (
                 <Card key={phrase.id} className="bg-muted">
@@ -311,6 +341,19 @@ export function PhraseManager({ availableGestures, onSavePhrases, initialPhrases
           )}
         </CardContent>
       </Card>
+      <Button onClick={handleSave} className="w-full mt-4" disabled={isSaving}>
+        {isSaving ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Saving Phrases...
+          </>
+        ) : (
+          <>
+            <Save className="mr-2 h-4 w-4" />
+            Save Phrases
+          </>
+        )}
+      </Button>
     </div>
   )
 }
