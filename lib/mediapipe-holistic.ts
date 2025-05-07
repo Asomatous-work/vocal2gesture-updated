@@ -9,16 +9,93 @@ export interface HolisticConfig {
   smoothSegmentation?: boolean
 }
 
-// Add this export interface after the existing HolisticConfig interface
-export interface HolisticDetection {
-  poseLandmarks?: any[]
-  faceLandmarks?: any[]
-  leftHandLandmarks?: any[]
-  rightHandLandmarks?: any[]
-  poseWorldLandmarks?: any[]
-  segmentationMask?: any
-  image?: any
-  timestamp?: number
+// Create a proper HolisticDetection class instead of just an interface
+export class HolisticDetection {
+  private holistic: Holistic | null = null
+  private camera: Camera | null = null
+  private videoElement: HTMLVideoElement | null = null
+  private isRunning = false
+  private onResultsCallback: ((results: Results) => void) | null = null
+  private onErrorCallback: ((error: Error) => void) | null = null
+
+  constructor(options: {
+    onResults?: (results: Results) => void
+    onError?: (error: Error) => void
+  }) {
+    if (options.onResults) {
+      this.onResultsCallback = options.onResults
+    }
+    if (options.onError) {
+      this.onErrorCallback = options.onError
+    }
+  }
+
+  public async initialize(): Promise<void> {
+    try {
+      this.holistic = new Holistic({
+        locateFile: (file) => {
+          return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+        },
+      })
+
+      await this.holistic.setOptions({
+        modelComplexity: 1,
+        smoothLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+        refineFaceLandmarks: true,
+      })
+
+      this.holistic.onResults((results) => {
+        if (this.onResultsCallback) {
+          this.onResultsCallback(results)
+        }
+      })
+    } catch (error) {
+      if (this.onErrorCallback) {
+        this.onErrorCallback(error instanceof Error ? error : new Error(String(error)))
+      }
+      throw error
+    }
+  }
+
+  public async start(videoElement: HTMLVideoElement): Promise<void> {
+    if (!this.holistic) {
+      throw new Error("HolisticDetection not initialized")
+    }
+
+    try {
+      this.videoElement = videoElement
+      this.camera = new Camera(videoElement, {
+        onFrame: async () => {
+          if (this.holistic && this.isRunning) {
+            await this.holistic.send({ image: videoElement })
+          }
+        },
+        width: 640,
+        height: 480,
+      })
+
+      this.isRunning = true
+      await this.camera.start()
+    } catch (error) {
+      if (this.onErrorCallback) {
+        this.onErrorCallback(error instanceof Error ? error : new Error(String(error)))
+      }
+      throw error
+    }
+  }
+
+  public stop(): void {
+    if (this.camera) {
+      this.camera.stop()
+    }
+    this.isRunning = false
+  }
+
+  public isActive(): boolean {
+    return this.isRunning
+  }
 }
 
 export class MediaPipeHolistic {

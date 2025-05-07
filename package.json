@@ -63,9 +63,9 @@
     "@tensorflow/tfjs": "latest",
     "@vercel/blob": "latest",
     "uuid": "latest",
+    "react-dropzone": "latest",
     "@mediapipe/camera_utils": "latest",
-    "@mediapipe/holistic": "latest",
-    "react-dropzone": "latest"
+    "@mediapipe/holistic": "latest"
   },
   "devDependencies": {
     "@types/node": "^22",
