@@ -1,6 +1,10 @@
 export interface HolisticDetectionOptions {
   onResults: (results: any) => void
   onError?: (error: Error) => void
+  modelComplexity?: number
+  smoothLandmarks?: boolean
+  minDetectionConfidence?: number
+  minTrackingConfidence?: number
 }
 
 export class HolisticDetection {
@@ -9,15 +13,25 @@ export class HolisticDetection {
   private options: HolisticDetectionOptions
   private isRunning = false
   private scriptsLoaded = false
+  private loadAttempts = 0
+  private maxLoadAttempts = 3
 
   constructor(options: HolisticDetectionOptions) {
-    this.options = options
+    this.options = {
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      minDetectionConfidence: 0.2,
+      minTrackingConfidence: 0.2,
+      ...options,
+    }
   }
 
   public async initialize(): Promise<void> {
     try {
       // Only initialize in browser environment
       if (typeof window === "undefined") return
+
+      console.log("Starting MediaPipe Holistic initialization...")
 
       // Load the MediaPipe scripts directly if not already loaded
       await this.loadMediaPipeScripts()
@@ -27,19 +41,21 @@ export class HolisticDetection {
 
       // Access the global Holistic object
       if (window.Holistic) {
+        console.log("Creating Holistic instance...")
         this.holistic = new window.Holistic({
           locateFile: (file: string) => {
             return `https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1635989137/${file}`
           },
         })
 
+        console.log("Setting Holistic options...")
         this.holistic.setOptions({
-          modelComplexity: 1,
-          smoothLandmarks: true,
-          minDetectionConfidence: 0.2, // Lower this from 0.3 to 0.2 for better detection
-          minTrackingConfidence: 0.2, // Lower this from 0.5 to 0.2 for better tracking
-          enableFaceGeometry: false, // Disable face geometry to focus on hands
-          refineFaceLandmarks: false, // Disable face refinement to focus on hands
+          modelComplexity: this.options.modelComplexity || 1,
+          smoothLandmarks: this.options.smoothLandmarks !== false,
+          minDetectionConfidence: this.options.minDetectionConfidence || 0.2,
+          minTrackingConfidence: this.options.minTrackingConfidence || 0.2,
+          enableFaceGeometry: false,
+          refineFaceLandmarks: false,
         })
 
         this.holistic.onResults((results: any) => {
@@ -58,17 +74,34 @@ export class HolisticDetection {
       if (this.options.onError) {
         this.options.onError(error as Error)
       }
+
+      // Retry initialization if under max attempts
+      if (this.loadAttempts < this.maxLoadAttempts) {
+        this.loadAttempts++
+        console.log(`Retrying initialization (attempt ${this.loadAttempts} of ${this.maxLoadAttempts})...`)
+        await new Promise((resolve) => setTimeout(resolve, 1000)) // Wait 1 second before retry
+        return this.initialize()
+      }
     }
   }
 
   private async loadMediaPipeScripts(): Promise<void> {
     // Check if scripts are already loaded
     if (window.Holistic && window.Camera) {
+      console.log("MediaPipe scripts already loaded")
       this.scriptsLoaded = true
       return
     }
 
+    console.log("Loading MediaPipe scripts...")
     return new Promise((resolve, reject) => {
+      // Remove any existing scripts to avoid conflicts
+      const existingHolistic = document.querySelector('script[src*="mediapipe/holistic"]')
+      const existingCamera = document.querySelector('script[src*="mediapipe/camera_utils"]')
+
+      if (existingHolistic) document.body.removeChild(existingHolistic)
+      if (existingCamera) document.body.removeChild(existingCamera)
+
       // Create a script element for loading the Holistic model
       const holisticScript = document.createElement("script")
       holisticScript.src = "https://cdn.jsdelivr.net/npm/@mediapipe/holistic@0.5.1635989137/holistic.js"
@@ -110,10 +143,18 @@ export class HolisticDetection {
   }
 
   private async waitForScriptsToLoad(): Promise<void> {
+    console.log("Waiting for MediaPipe scripts to initialize...")
     // Wait for scripts to be fully loaded and objects to be available
     return new Promise((resolve) => {
+      const maxWaitTime = 10000 // 10 seconds max wait
+      const startTime = Date.now()
+
       const checkScripts = () => {
         if (window.Holistic && window.Camera) {
+          console.log("MediaPipe objects available")
+          resolve()
+        } else if (Date.now() - startTime > maxWaitTime) {
+          console.warn("Timed out waiting for MediaPipe objects, continuing anyway")
           resolve()
         } else {
           setTimeout(checkScripts, 100)
@@ -126,12 +167,24 @@ export class HolisticDetection {
   }
 
   public async start(videoElement: HTMLVideoElement): Promise<void> {
-    if (!this.holistic || this.isRunning) return
+    if (!this.holistic) {
+      console.error("Holistic not initialized, cannot start")
+      return
+    }
+
+    if (this.isRunning) {
+      console.log("MediaPipe already running")
+      return
+    }
 
     try {
+      console.log("Starting MediaPipe camera...")
       if (!window.Camera) {
         throw new Error("MediaPipe Camera not available")
       }
+
+      // Ensure video has crossOrigin attribute set
+      videoElement.crossOrigin = "anonymous"
 
       this.camera = new window.Camera(videoElement, {
         onFrame: async () => {
@@ -163,6 +216,7 @@ export class HolisticDetection {
   }
 
   public stop(): void {
+    console.log("Stopping MediaPipe detection")
     this.isRunning = false
 
     if (this.camera) {

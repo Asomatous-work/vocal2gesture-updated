@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
-import { ChevronLeft, ChevronRight, Play, Pause, RotateCcw, Settings, Volume2, VolumeX } from "lucide-react"
+import { ChevronLeft, ChevronRight, Play, Pause, RotateCcw, Settings, Volume2, VolumeX, Layers } from "lucide-react"
 import { modelManager } from "@/lib/model-manager"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
 import { Slider } from "@/components/ui/slider"
@@ -22,6 +22,8 @@ import {
 } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
+import type { AnimationData, AnimationFrame } from "@/lib/animation-data"
+import { POSE_CONNECTIONS, HAND_CONNECTIONS, FACEMESH_TESSELATION } from "@/lib/pose-utils"
 
 interface SlideImage {
   word: string
@@ -29,6 +31,7 @@ interface SlideImage {
   id: string
   category?: string
   tags?: string[]
+  animation?: AnimationData
 }
 
 interface SlideShowProps {
@@ -59,8 +62,13 @@ export function EnhancedSignSlideshow({
   const [showMissingWords, setShowMissingWords] = useState(false)
   const [missingWords, setMissingWords] = useState<string[]>([])
   const [loadingProgress, setLoadingProgress] = useState(0)
+  const [showAnimations, setShowAnimations] = useState(true)
+  const [isAnimating, setIsAnimating] = useState(false)
 
   const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const animationRef = useRef<NodeJS.Timeout | null>(null)
+  const animationFrameRef = useRef<number>(0)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
   const { toast } = useToast()
 
   // Load images on component mount or when words change
@@ -88,6 +96,23 @@ export function EnhancedSignSlideshow({
     }
   }, [currentIndex, slideImages.length])
 
+  // Initialize animation canvas
+  useEffect(() => {
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext("2d")
+      if (ctx) {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.5)"
+        ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+
+        // Draw placeholder text
+        ctx.fillStyle = "white"
+        ctx.font = "14px Arial"
+        ctx.textAlign = "center"
+        ctx.fillText("Animation will play here", canvasRef.current.width / 2, canvasRef.current.height / 2)
+      }
+    }
+  }, [])
+
   const loadImages = async () => {
     setIsLoading(true)
     setLoadingProgress(0)
@@ -106,6 +131,7 @@ export function EnhancedSignSlideshow({
       // Get all sign images
       const allImages = modelManager.getSignImages()
       const allGestures = modelManager.getGestures()
+      const allAnimations = modelManager.getAnimations()
 
       // Extract all available categories
       const categories = new Set<string>()
@@ -127,6 +153,9 @@ export function EnhancedSignSlideshow({
           // Find images for this word
           const wordImages = allImages.filter((img) => img.word.toLowerCase() === word.toLowerCase())
 
+          // Find animations for this word
+          const wordAnimation = allAnimations.find((anim) => anim.word.toLowerCase() === word.toLowerCase())
+
           // If no direct images, check gestures
           if (wordImages.length === 0) {
             const gesture = allGestures.find((g) => g.name.toLowerCase() === word.toLowerCase())
@@ -138,6 +167,7 @@ export function EnhancedSignSlideshow({
                   url,
                   id: `${word}-${idx}`,
                   category: "gesture",
+                  animation: wordAnimation,
                 })
               })
             } else {
@@ -145,8 +175,13 @@ export function EnhancedSignSlideshow({
               missing.push(word)
             }
           } else {
-            // Add direct images
-            filteredImages = [...filteredImages, ...wordImages]
+            // Add direct images with animation if available
+            wordImages.forEach((img) => {
+              filteredImages.push({
+                ...img,
+                animation: wordAnimation,
+              })
+            })
           }
 
           // Update progress
@@ -160,7 +195,13 @@ export function EnhancedSignSlideshow({
         }
       } else {
         // If no words provided, use all images
-        filteredImages = allImages
+        filteredImages = allImages.map((img) => {
+          const animation = allAnimations.find((anim) => anim.word.toLowerCase() === img.word.toLowerCase())
+          return {
+            ...img,
+            animation,
+          }
+        })
         setLoadingProgress(95)
       }
 
@@ -194,6 +235,11 @@ export function EnhancedSignSlideshow({
         if (isSpeechEnabled) {
           speakWord(slideImages[currentIndex + 1].word)
         }
+
+        // Start animation for the next slide if available
+        if (showAnimations && slideImages[currentIndex + 1].animation) {
+          startAnimation(slideImages[currentIndex + 1].animation!)
+        }
       } else {
         // End of slideshow
         setIsPlaying(false)
@@ -209,6 +255,9 @@ export function EnhancedSignSlideshow({
       clearTimeout(timerRef.current)
       timerRef.current = null
     }
+
+    // Stop any running animation
+    stopAnimation()
   }
 
   const goToNextSlide = () => {
@@ -216,6 +265,11 @@ export function EnhancedSignSlideshow({
       setCurrentIndex(currentIndex + 1)
       if (isSpeechEnabled) {
         speakWord(slideImages[currentIndex + 1].word)
+      }
+
+      // Start animation for the next slide if available
+      if (showAnimations && slideImages[currentIndex + 1].animation) {
+        startAnimation(slideImages[currentIndex + 1].animation!)
       }
     }
   }
@@ -226,6 +280,11 @@ export function EnhancedSignSlideshow({
       if (isSpeechEnabled) {
         speakWord(slideImages[currentIndex - 1].word)
       }
+
+      // Start animation for the previous slide if available
+      if (showAnimations && slideImages[currentIndex - 1].animation) {
+        startAnimation(slideImages[currentIndex - 1].animation!)
+      }
     }
   }
 
@@ -234,12 +293,22 @@ export function EnhancedSignSlideshow({
     if (!isPlaying && isSpeechEnabled) {
       speakWord(slideImages[currentIndex].word)
     }
+
+    // Start animation for current slide if available
+    if (!isPlaying && showAnimations && slideImages[currentIndex].animation) {
+      startAnimation(slideImages[currentIndex].animation!)
+    }
   }
 
   const resetSlideshow = () => {
     setCurrentIndex(0)
     if (isSpeechEnabled) {
       speakWord(slideImages[0].word)
+    }
+
+    // Start animation for first slide if available
+    if (showAnimations && slideImages[0].animation) {
+      startAnimation(slideImages[0].animation!)
     }
   }
 
@@ -280,6 +349,117 @@ export function EnhancedSignSlideshow({
     }
 
     setShowSettings(false)
+  }
+
+  // Animation functions
+  const startAnimation = (animation: AnimationData) => {
+    // Stop any existing animation
+    stopAnimation()
+
+    if (!showAnimations || !canvasRef.current || animation.frames.length === 0) return
+
+    setIsAnimating(true)
+    animationFrameRef.current = 0
+
+    // Calculate frame time based on animation metadata or default
+    const fps = animation.metadata?.fps || 30
+    const frameTime = 1000 / fps / playbackSpeed
+
+    // Draw first frame
+    drawAnimationFrame(animation.frames[0])
+
+    // Set up animation interval
+    animationRef.current = setInterval(() => {
+      animationFrameRef.current++
+
+      // Loop back to beginning if we reach the end
+      if (animationFrameRef.current >= animation.frames.length) {
+        animationFrameRef.current = 0
+      }
+
+      // Draw the current frame
+      drawAnimationFrame(animation.frames[animationFrameRef.current])
+    }, frameTime)
+  }
+
+  const stopAnimation = () => {
+    if (animationRef.current) {
+      clearInterval(animationRef.current)
+      animationRef.current = null
+    }
+    setIsAnimating(false)
+  }
+
+  const drawAnimationFrame = (frame: AnimationFrame) => {
+    if (!canvasRef.current) return
+
+    const ctx = canvasRef.current.getContext("2d")
+    if (!ctx) return
+
+    const width = canvasRef.current.width
+    const height = canvasRef.current.height
+
+    // Clear canvas
+    ctx.clearRect(0, 0, width, height)
+
+    // Fill with transparent background
+    ctx.fillStyle = "rgba(0, 0, 0, 0.7)"
+    ctx.fillRect(0, 0, width, height)
+
+    // Draw pose landmarks
+    if (frame.pose && frame.pose.length > 0) {
+      drawConnectors(ctx, frame.pose, POSE_CONNECTIONS, { color: "#00FF00", lineWidth: 2 })
+      drawLandmarks(ctx, frame.pose, { color: "#FF0000", lineWidth: 1, radius: 3 })
+    }
+
+    // Draw hand landmarks
+    if (frame.leftHand && frame.leftHand.length > 0) {
+      drawConnectors(ctx, frame.leftHand, HAND_CONNECTIONS, { color: "#0000FF", lineWidth: 2 })
+      drawLandmarks(ctx, frame.leftHand, { color: "#00FFFF", lineWidth: 1, radius: 3 })
+    }
+
+    if (frame.rightHand && frame.rightHand.length > 0) {
+      drawConnectors(ctx, frame.rightHand, HAND_CONNECTIONS, { color: "#FF00FF", lineWidth: 2 })
+      drawLandmarks(ctx, frame.rightHand, { color: "#FFFF00", lineWidth: 1, radius: 3 })
+    }
+
+    // Draw face mesh (simplified)
+    if (frame.face && frame.face.length > 0) {
+      drawConnectors(ctx, frame.face, FACEMESH_TESSELATION, { color: "#C0C0C070", lineWidth: 1 })
+    }
+  }
+
+  // Helper functions for drawing landmarks
+  const drawConnectors = (ctx: CanvasRenderingContext2D, landmarks: any[], connections: any[], options: any) => {
+    const canvas = ctx.canvas
+    for (const connection of connections) {
+      const from = landmarks[connection[0]]
+      const to = landmarks[connection[1]]
+      if (from && to) {
+        if (from.visibility && to.visibility && (from.visibility < 0.1 || to.visibility < 0.1)) {
+          continue
+        }
+        ctx.beginPath()
+        ctx.moveTo(from.x * canvas.width, from.y * canvas.height)
+        ctx.lineTo(to.x * canvas.width, to.y * canvas.height)
+        ctx.strokeStyle = options.color
+        ctx.lineWidth = options.lineWidth
+        ctx.stroke()
+      }
+    }
+  }
+
+  const drawLandmarks = (ctx: CanvasRenderingContext2D, landmarks: any[], options: any) => {
+    const canvas = ctx.canvas
+    for (const landmark of landmarks) {
+      if (landmark.visibility && landmark.visibility < 0.1) {
+        continue
+      }
+      ctx.beginPath()
+      ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, options.radius, 0, 2 * Math.PI)
+      ctx.fillStyle = options.color
+      ctx.fill()
+    }
   }
 
   // If no images are available
@@ -354,6 +534,18 @@ export function EnhancedSignSlideshow({
                   )}
                 </motion.div>
               </AnimatePresence>
+
+              {/* Animation overlay */}
+              {showAnimations && slideImages[currentIndex]?.animation && (
+                <div className="absolute inset-0 pointer-events-none">
+                  <canvas
+                    ref={canvasRef}
+                    width={320}
+                    height={240}
+                    className="absolute bottom-4 right-4 w-1/3 h-1/3 rounded-lg border border-white/20"
+                  />
+                </div>
+              )}
 
               {/* Word overlay */}
               <div className="absolute bottom-0 left-0 right-0 bg-black/70 p-4 text-white">
@@ -443,6 +635,14 @@ export function EnhancedSignSlideshow({
                 Speech Narration
               </Label>
               <Switch id="speech-enabled" checked={isSpeechEnabled} onCheckedChange={setIsSpeechEnabled} />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <Label htmlFor="animations-enabled" className="flex items-center gap-2">
+                <Layers className="h-4 w-4" />
+                Show Animations
+              </Label>
+              <Switch id="animations-enabled" checked={showAnimations} onCheckedChange={setShowAnimations} />
             </div>
 
             <div className="space-y-2">
