@@ -3,7 +3,7 @@
 import { useState } from "react"
 import Link from "next/link"
 import Image from "next/image"
-import { Menu, X } from "lucide-react"
+import { Menu, X, ImageIcon } from "lucide-react"
 
 export function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
@@ -49,10 +49,11 @@ export function Navbar() {
                 Sign to Speech
               </Link>
               <Link
-                href="/upload"
+                href="/sign-image-library"
                 className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
               >
-                Upload
+                <ImageIcon className="h-4 w-4 mr-1" />
+                Sign Library
               </Link>
               <Link
                 href="/system-dashboard"
@@ -100,11 +101,12 @@ export function Navbar() {
               Sign to Speech
             </Link>
             <Link
-              href="/upload"
-              className="text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white block pl-3 pr-4 py-2 border-l-4 border-transparent text-base font-medium"
+              href="/sign-image-library"
+              className="text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white flex items-center pl-3 pr-4 py-2 border-l-4 border-transparent text-base font-medium"
               onClick={toggleMenu}
             >
-              Upload
+              <ImageIcon className="h-4 w-4 mr-2" />
+              Sign Library
             </Link>
             <Link
               href="/system-dashboard"

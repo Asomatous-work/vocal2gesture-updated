@@ -164,58 +164,36 @@ class ModelManager {
   }
 
   // Add a sign image
-  public addSignImage(
-    word: string,
-    url: string,
-    id: string = Date.now().toString(),
-    category?: string,
-    tags?: string[],
-  ) {
-    const existingIndex = this.signImages.findIndex((img) => img.id === id)
+  public addSignImage(word: string, url: string, id?: string): void {
+    // Get current images
+    const existingImages = this.getSignImages()
 
-    if (existingIndex >= 0) {
-      // Update existing image
-      this.signImages[existingIndex] = {
-        word,
-        url,
-        id,
-        category,
-        tags,
-      }
-    } else {
-      // Add new image
-      this.signImages.push({
-        word,
-        url,
-        id,
-        category,
-        tags,
-      })
-    }
+    // Add new image
+    const newImage = { word, url, id }
+    const updatedImages = [newImage, ...existingImages.filter((img) => img.url !== url)]
 
-    // Also add to gesture data for slideshow
-    const gestureIndex = this.gestures.findIndex((g) => g.name === word)
-    if (gestureIndex >= 0) {
-      // Add to existing gesture
-      if (!this.gestures[gestureIndex].images) {
-        this.gestures[gestureIndex].images = []
-      }
-      if (!this.gestures[gestureIndex].images.includes(url)) {
-        this.gestures[gestureIndex].images.push(url)
-      }
-    } else {
-      // Create new gesture with this image
-      this.gestures.push({
-        name: word,
-        landmarks: [],
-        samples: 0,
-        images: [url],
-      })
-    }
+    // Save to localStorage
+    localStorage.setItem("sign-images", JSON.stringify(updatedImages))
+  }
 
-    // Only save to localStorage if we haven't exceeded quota
-    if (!this.storageQuotaExceeded) {
-      this.saveToLocalStorage()
+  public removeSignImage(word: string, url: string): void {
+    // Get current images
+    const existingImages = this.getSignImages()
+
+    // Remove the specified image
+    const updatedImages = existingImages.filter((img) => img.url !== url)
+
+    // Save to localStorage
+    localStorage.setItem("sign-images", JSON.stringify(updatedImages))
+  }
+
+  public getSignImages(): Array<{ word: string; url: string; id?: string }> {
+    try {
+      const savedImages = localStorage.getItem("sign-images")
+      return savedImages ? JSON.parse(savedImages) : []
+    } catch (error) {
+      console.error("Error retrieving sign images:", error)
+      return []
     }
   }
 
@@ -230,11 +208,6 @@ class ModelManager {
 
   public getAllGestures(): GestureData[] {
     return this.gestures
-  }
-
-  // Get all sign images
-  public getSignImages() {
-    return this.signImages
   }
 
   // Check if storage quota is exceeded
