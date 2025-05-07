@@ -1,11 +1,10 @@
-import { LSTMGestureTrainer } from "@/components/lstm-gesture-trainer"
-import type { Metadata } from "next"
+import { TrainingClient } from "./training-client"
 
-export const metadata: Metadata = {
+export const metadata = {
   title: "Gesture Training | Vocal2Gestures",
   description: "Train custom hand gestures using LSTM neural networks for improved sign language recognition",
 }
 
 export default function TrainingPage() {
-  return <LSTMGestureTrainer />
+  return <TrainingClient />
 }
