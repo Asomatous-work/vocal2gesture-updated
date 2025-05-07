@@ -1,0 +1,25 @@
+version: '3'
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_PYTHON_BACKEND_URL=http://backend:5000
+    depends_on:
+      - backend
+    volumes:
+      - ./:/app
+      - /app/node_modules
+
+  backend:
+    build:
+      context: ./python_backend
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./python_backend:/app

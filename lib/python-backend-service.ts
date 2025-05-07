@@ -1,258 +1,148 @@
 /**
- * Service to communicate with the Python backend
+ * Service to interact with the Python backend or Vercel API routes
  */
 export class PythonBackendService {
-  private baseUrl: string
   private isAvailable = false
+  private useVercelRoutes = true
 
-  constructor(baseUrl = "http://localhost:5000") {
-    this.baseUrl = baseUrl
+  constructor() {
+    // Check if we're using Vercel API routes or an external Python backend
+    this.useVercelRoutes =
+      !process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL || process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL === "vercel"
     this.checkAvailability()
   }
 
   /**
-   * Check if the Python backend is available
+   * Check if the backend is available
    */
   async checkAvailability(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/api/health`)
+      const endpoint = this.useVercelRoutes ? "/api/status" : `${process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL}/status`
+
+      const response = await fetch(endpoint, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      })
+
       if (response.ok) {
         this.isAvailable = true
+        console.log("Backend is available")
         return true
       }
+
+      this.isAvailable = false
+      console.log("Backend is not available")
       return false
     } catch (error) {
-      console.error("Python backend is not available:", error)
+      console.error("Error checking backend availability:", error)
       this.isAvailable = false
       return false
     }
   }
 
   /**
-   * Check if the service is available
+   * Get the availability status of the backend
    */
-  getAvailability(): boolean {
+  getAvailabilityStatus(): boolean {
     return this.isAvailable
   }
 
   /**
-   * Process a video frame and get hand landmarks
-   * @param imageData Base64 encoded image data
+   * Process hand landmarks for sign language recognition
    */
-  async processFrame(imageData: string): Promise<any> {
+  async processHandLandmarks(landmarks: any): Promise<any> {
     if (!this.isAvailable) {
-      throw new Error("Python backend is not available")
+      throw new Error("Backend is not available")
     }
 
-    const response = await fetch(`${this.baseUrl}/api/process-frame`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ image: imageData }),
-    })
+    try {
+      const endpoint = this.useVercelRoutes
+        ? "/api/process-landmarks"
+        : `${process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL}/process-landmarks`
 
-    if (!response.ok) {
-      throw new Error(`Failed to process frame: ${response.statusText}`)
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ landmarks }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      return await response.json()
+    } catch (error) {
+      console.error("Error processing hand landmarks:", error)
+      throw error
     }
-
-    return response.json()
   }
 
   /**
-   * Recognize a gesture from landmarks
-   * @param landmarks Hand landmarks
-   * @param confidenceThreshold Confidence threshold for recognition
+   * Train a model with the provided data
    */
-  async recognizeGesture(landmarks: any, confidenceThreshold = 0.7): Promise<any> {
+  async trainModel(trainingData: any): Promise<any> {
     if (!this.isAvailable) {
-      throw new Error("Python backend is not available")
+      throw new Error("Backend is not available")
     }
 
-    const response = await fetch(`${this.baseUrl}/api/recognize-gesture`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ landmarks, confidenceThreshold }),
-    })
+    try {
+      const endpoint = this.useVercelRoutes
+        ? "/api/train-model"
+        : `${process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL}/train-model`
 
-    if (!response.ok) {
-      throw new Error(`Failed to recognize gesture: ${response.statusText}`)
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(trainingData),
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      return await response.json()
+    } catch (error) {
+      console.error("Error training model:", error)
+      throw error
     }
-
-    return response.json()
   }
 
   /**
-   * Train a new gesture recognition model with advanced options
-   * @param gestures Gesture data
-   * @param epochs Number of training epochs
-   * @param learningRate Learning rate for training
-   * @param modelType Type of model to train (lstm or cnn_lstm)
-   * @param batchSize Batch size for training
+   * Process video frame for sign language recognition
    */
-  async trainModel(
-    gestures: any[],
-    epochs = 100,
-    learningRate = 0.001,
-    modelType = "cnn_lstm",
-    batchSize = 32,
-  ): Promise<any> {
+  async processVideoFrame(imageData: string): Promise<any> {
     if (!this.isAvailable) {
-      throw new Error("Python backend is not available")
+      throw new Error("Backend is not available")
     }
 
-    const response = await fetch(`${this.baseUrl}/api/train-model`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        gestures,
-        epochs,
-        learningRate,
-        modelType,
-        batchSize,
-      }),
-    })
+    try {
+      const endpoint = this.useVercelRoutes
+        ? "/api/process-frame"
+        : `${process.env.NEXT_PUBLIC_PYTHON_BACKEND_URL}/process-frame`
 
-    if (!response.ok) {
-      throw new Error(`Failed to train model: ${response.statusText}`)
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ image: imageData }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      return await response.json()
+    } catch (error) {
+      console.error("Error processing video frame:", error)
+      throw error
     }
-
-    return response.json()
-  }
-
-  /**
-   * Save the current model
-   * @param name Model name
-   */
-  async saveModel(name: string): Promise<any> {
-    if (!this.isAvailable) {
-      throw new Error("Python backend is not available")
-    }
-
-    const response = await fetch(`${this.baseUrl}/api/save-model`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ name }),
-    })
-
-    if (!response.ok) {
-      throw new Error(`Failed to save model: ${response.statusText}`)
-    }
-
-    return response.json()
-  }
-
-  /**
-   * Load a saved model
-   * @param modelId Model ID
-   */
-  async loadModel(modelId: string): Promise<any> {
-    if (!this.isAvailable) {
-      throw new Error("Python backend is not available")
-    }
-
-    const response = await fetch(`${this.baseUrl}/api/load-model`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ modelId }),
-    })
-
-    if (!response.ok) {
-      throw new Error(`Failed to load model: ${response.statusText}`)
-    }
-
-    return response.json()
-  }
-
-  /**
-   * List all saved models
-   */
-  async listModels(): Promise<any> {
-    if (!this.isAvailable) {
-      throw new Error("Python backend is not available")
-    }
-
-    const response = await fetch(`${this.baseUrl}/api/list-models`)
-
-    if (!response.ok) {
-      throw new Error(`Failed to list models: ${response.statusText}`)
-    }
-
-    return response.json()
-  }
-
-  /**
-   * Collect a sample for a gesture
-   * @param gestureName Gesture name
-   * @param frames Array of frames with landmarks
-   */
-  async collectSample(gestureName: string, frames: any[]): Promise<any> {
-    if (!this.isAvailable) {
-      throw new Error("Python backend is not available")
-    }
-
-    const response = await fetch(`${this.baseUrl}/api/collect-sample`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ gestureName, frames }),
-    })
-
-    if (!response.ok) {
-      throw new Error(`Failed to collect sample: ${response.statusText}`)
-    }
-
-    return response.json()
-  }
-
-  /**
-   * Evaluate the current model
-   * @param testData Optional test data for evaluation
-   */
-  async evaluateModel(testData?: any[]): Promise<any> {
-    if (!this.isAvailable) {
-      throw new Error("Python backend is not available")
-    }
-
-    const response = await fetch(`${this.baseUrl}/api/evaluate-model`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ testData }),
-    })
-
-    if (!response.ok) {
-      throw new Error(`Failed to evaluate model: ${response.statusText}`)
-    }
-
-    return response.json()
-  }
-
-  /**
-   * Get available training options
-   */
-  async getTrainingOptions(): Promise<any> {
-    if (!this.isAvailable) {
-      throw new Error("Python backend is not available")
-    }
-
-    const response = await fetch(`${this.baseUrl}/api/training-options`)
-
-    if (!response.ok) {
-      throw new Error(`Failed to get training options: ${response.statusText}`)
-    }
-
-    return response.json()
   }
 }
 
