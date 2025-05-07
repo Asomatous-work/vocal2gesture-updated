@@ -9,6 +9,7 @@ import mediapipe as mp
 from advanced_gesture_recognizer import AdvancedGestureRecognizer
 import tensorflow as tf
 import time
+from sign_to_speech_service import sign_to_speech_service
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -233,6 +234,65 @@ def get_training_options():
             'modelCheckpointEnabled': True
         }
     })
+
+@app.route('/api/sign-to-speech/recognize', methods=['POST'])
+def recognize_sign():
+    """Recognize a sign from an image"""
+    if 'image' not in request.json:
+        return jsonify({'error': 'No image data provided'}), 400
+    
+    try:
+        image_data = request.json['image']
+        confidence_threshold = request.json.get('confidenceThreshold', 0.5)
+        
+        result = sign_to_speech_service.recognize_sign(image_data, confidence_threshold)
+        return jsonify(result)
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/sign-to-speech/translate', methods=['POST'])
+def translate_sign():
+    """Translate a sign to speech text"""
+    if 'image' not in request.json:
+        return jsonify({'error': 'No image data provided'}), 400
+    
+    try:
+        image_data = request.json['image']
+        confidence_threshold = request.json.get('confidenceThreshold', 0.5)
+        
+        result = sign_to_speech_service.translate_sign_to_speech(image_data, confidence_threshold)
+        return jsonify(result)
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/sign-to-speech/models', methods=['GET'])
+def list_sign_models():
+    """List all sign language models"""
+    try:
+        models = sign_to_speech_service.list_models()
+        return jsonify({'models': models})
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/sign-to-speech/load-model', methods=['POST'])
+def load_sign_model():
+    """Load a sign language model"""
+    if 'modelId' not in request.json:
+        return jsonify({'error': 'No model ID provided'}), 400
+    
+    try:
+        model_id = request.json['modelId']
+        success = sign_to_speech_service.load_model(model_id)
+        
+        return jsonify({
+            'success': success
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

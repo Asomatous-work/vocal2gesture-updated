@@ -1,31 +1,14 @@
-# Vocal2Gestures Python Backend
+# Python Backend for Sign Language Processing
 
-This is the Python backend for the Vocal2Gestures web application. It provides improved gesture recognition capabilities using Python's powerful machine learning libraries.
+This directory contains the Python backend services for sign language processing, recognition, and translation.
 
-## Features
+## Setup Instructions
 
-- High-performance hand landmark detection using MediaPipe
-- LSTM-based gesture recognition model
-- API endpoints for the web application to use
-- Shared model storage between Python and JavaScript
-
-## Requirements
-
-- Python 3.8 or higher
-- TensorFlow 2.6+
-- MediaPipe 0.8.9+
-- Flask and Flask-CORS
-- OpenCV
-- NumPy
-- scikit-learn
-
-## Setup
-
-1. Make sure you have Python 3.8+ installed
-2. Run the setup script:
+1. Make sure you have Python 3.8+ installed on your system
+2. Install the required packages:
 
 \`\`\`bash
-python setup.py
+pip install -r requirements.txt
 \`\`\`
 
 3. Start the server:
@@ -34,22 +17,55 @@ python setup.py
 python app.py
 \`\`\`
 
-4. The server will be available at http://localhost:5000
+The server will run on http://localhost:5000 by default.
+
+## Features
+
+- Hand landmark detection using MediaPipe
+- Sign language recognition with TensorFlow
+- Model training and evaluation
+- Sign-to-speech translation
 
 ## API Endpoints
 
-- `/api/health` - Check if the server is running
-- `/api/process-frame` - Process a video frame and return hand landmarks
-- `/api/recognize-gesture` - Recognize a gesture from landmarks
-- `/api/train-model` - Train a new gesture recognition model
-- `/api/save-model` - Save the current model
-- `/api/load-model` - Load a saved model
-- `/api/list-models` - List all saved models
-- `/api/collect-sample` - Collect a sample for a gesture
+### Health Check
+- `GET /api/health` - Check if the server is running
 
-## Integration with Web App
+### Frame Processing
+- `POST /api/process-frame` - Process a video frame and extract hand landmarks
 
-The web application will automatically detect if the Python backend is available and use it for improved performance. If the Python backend is not available, it will fall back to the JavaScript implementation.
-\`\`\`
+### Gesture Recognition
+- `POST /api/recognize-gesture` - Recognize a gesture from landmarks
 
-Let's update the app/training/page.tsx to use our new component:
+### Model Management
+- `POST /api/train-model` - Train a new gesture recognition model
+- `POST /api/save-model` - Save the current model
+- `POST /api/load-model` - Load a saved model
+- `GET /api/list-models` - List all saved models
+
+### Sign-to-Speech
+- `POST /api/sign-to-speech/recognize` - Recognize a sign from an image
+- `POST /api/sign-to-speech/translate` - Translate a sign to speech text
+- `GET /api/sign-to-speech/models` - List all sign language models
+- `POST /api/sign-to-speech/load-model` - Load a sign language model
+
+## Model Training
+
+The backend supports training different types of models:
+- LSTM (Long Short-Term Memory)
+- CNN-LSTM (Convolutional Neural Network + LSTM)
+
+Training parameters can be customized:
+- Number of epochs
+- Learning rate
+- Batch size
+- Model architecture
+
+## Troubleshooting
+
+If you encounter any issues:
+
+1. Make sure all required packages are installed
+2. Check that the correct versions are being used
+3. Look for error messages in the console
+4. Ensure the frontend is configured to connect to the correct URL

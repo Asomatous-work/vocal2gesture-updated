@@ -18,6 +18,7 @@ import {
   POSE_CONNECTIONS,
   FACEMESH_TESSELATION,
 } from "@/lib/pose-utils"
+import { signToSpeechService } from "@/lib/sign-to-speech-service"
 
 export function SignToSpeechDemo() {
   const [isCameraActive, setIsCameraActive] = useState(false)
@@ -32,6 +33,7 @@ export function SignToSpeechDemo() {
     "initializing",
   )
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [pythonBackendAvailable, setPythonBackendAvailable] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -66,6 +68,36 @@ export function SignToSpeechDemo() {
         holisticRef.current.stop()
       }
     }
+  }, [])
+
+  // Check if Python backend is available
+  useEffect(() => {
+    const checkPythonBackend = async () => {
+      try {
+        const available = await signToSpeechService.checkAvailability()
+        setPythonBackendAvailable(available)
+
+        if (available) {
+          console.log("Python backend is available for sign-to-speech")
+
+          // Load available models
+          const modelsResponse = await signToSpeechService.listModels()
+          if (modelsResponse.models && modelsResponse.models.length > 0) {
+            // Load the first model
+            const firstModel = modelsResponse.models[0]
+            await signToSpeechService.loadModel(firstModel.id)
+            console.log(`Loaded sign language model: ${firstModel.name}`)
+          }
+        } else {
+          console.warn("Python backend is not available. Using JavaScript fallback.")
+        }
+      } catch (error) {
+        console.error("Error checking Python backend:", error)
+        setPythonBackendAvailable(false)
+      }
+    }
+
+    checkPythonBackend()
   }, [])
 
   // Handle MediaPipe loaded
@@ -497,6 +529,11 @@ export function SignToSpeechDemo() {
                   {isLoading && (
                     <div className="absolute inset-0 flex items-center justify-center">
                       <LoadingSpinner size="lg" text="Loading models..." />
+                    </div>
+                  )}
+                  {pythonBackendAvailable && (
+                    <div className="absolute top-2 right-2 bg-green-500 text-white px-2 py-1 rounded text-xs">
+                      Python Backend Active
                     </div>
                   )}
                 </div>

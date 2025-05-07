@@ -1,20 +1,36 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Slider } from "@/components/ui/slider"
-import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Progress } from "@/components/ui/progress"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardFooter,
+  Button,
+  Input,
+  Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Slider,
+  Switch,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  Progress,
+  Alert,
+  AlertDescription,
+  AlertTitle,
+  ScrollArea,
+  useToast,
+} from "@/components/ui"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
 import { pythonBackendService } from "@/lib/python-backend-service"
-import { useToast } from "@/components/ui/use-toast"
 import {
   Brain,
   Server,
@@ -58,7 +74,6 @@ export function AdvancedModelTrainer({ gestures = [], onModelTrained }: Advanced
 
   const { toast } = useToast()
 
-  // Check if Python backend is available and get training options
   useEffect(() => {
     const initialize = async () => {
       try {
@@ -67,20 +82,14 @@ export function AdvancedModelTrainer({ gestures = [], onModelTrained }: Advanced
 
         if (available) {
           addLog("success", "Connected to Python backend successfully")
-
-          // Get training options
           const options = await pythonBackendService.getTrainingOptions()
           setTrainingOptions(options)
-
-          // Set defaults from options
           if (options) {
             setEpochs(options.defaultEpochs || 100)
             setLearningRate(options.defaultLearningRate || 0.001)
             setBatchSize(options.defaultBatchSize || 32)
             setSelectedModelType(options.modelTypes?.[0] || "cnn_lstm")
           }
-
-          // Get available models
           const modelsResponse = await pythonBackendService.listModels()
           if (modelsResponse.models) {
             setPythonModels(modelsResponse.models)
@@ -89,52 +98,32 @@ export function AdvancedModelTrainer({ gestures = [], onModelTrained }: Advanced
         } else {
           addLog("error", "Python backend is not available. Please start the Python server.")
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error("Error initializing:", error)
         addLog("error", `Initialization error: ${error.message}`)
       }
     }
-
     initialize()
   }, [])
 
-  // Add log entry
   const addLog = (type: "info" | "success" | "error" | "warning" | "epoch", message: string) => {
-    setLogs((prevLogs) => [
-      ...prevLogs,
-      {
-        id: Date.now() + Math.random(),
-        type,
-        message,
-        timestamp: new Date(),
-      },
-    ])
+    setLogs((prevLogs) => [...prevLogs, { id: Date.now() + Math.random(), type, message, timestamp: new Date() }])
   }
 
-  // Format timestamp for logs
-  const formatTimestamp = (date: Date) => {
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-  }
+  const formatTimestamp = (date: Date) =>
+    date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
 
-  // Get icon for log type
   const getLogTypeIcon = (type: string) => {
-    switch (type) {
-      case "info":
-        return <Info className="h-4 w-4 text-blue-500" />
-      case "success":
-        return <CheckCircle2 className="h-4 w-4 text-green-500" />
-      case "error":
-        return <AlertCircle className="h-4 w-4 text-red-500" />
-      case "warning":
-        return <AlertCircle className="h-4 w-4 text-yellow-500" />
-      case "epoch":
-        return <RefreshCw className="h-4 w-4 text-purple-500" />
-      default:
-        return <Info className="h-4 w-4" />
+    const icons: any = {
+      info: <Info className="h-4 w-4 text-blue-500" />,
+      success: <CheckCircle2 className="h-4 w-4 text-green-500" />,
+      error: <AlertCircle className="h-4 w-4 text-red-500" />,
+      warning: <AlertCircle className="h-4 w-4 text-yellow-500" />,
+      epoch: <RefreshCw className="h-4 w-4 text-purple-500" />,
     }
+    return icons[type] || <Info className="h-4 w-4" />
   }
 
-  // Train the model
   const trainModel = async () => {
     if (!pythonBackendAvailable) {
       toast({
@@ -144,7 +133,6 @@ export function AdvancedModelTrainer({ gestures = [], onModelTrained }: Advanced
       })
       return
     }
-
     if (gestures.length === 0) {
       toast({
         title: "No Gestures Available",
@@ -168,7 +156,6 @@ export function AdvancedModelTrainer({ gestures = [], onModelTrained }: Advanced
     )
 
     try {
-      // Set up a progress simulation since we don't get real-time updates from the backend
       const progressInterval = setInterval(() => {
         setCurrentEpoch((prev) => {
           if (prev < epochs) {
@@ -180,10 +167,7 @@ export function AdvancedModelTrainer({ gestures = [], onModelTrained }: Advanced
         })
       }, 1000)
 
-      // Train the model
       const result = await pythonBackendService.trainModel(gestures, epochs, learningRate, selectedModelType, batchSize)
-
-      // Clear the progress interval
       clearInterval(progressInterval)
 
       if (result.success) {
@@ -194,82 +178,45 @@ export function AdvancedModelTrainer({ gestures = [], onModelTrained }: Advanced
         setCurrentEpoch(epochs)
 
         addLog("success", `Model trained successfully with ${result.accuracy * 100}% accuracy`)
+        toast({ title: "Training Complete", description: `Model trained with ${result.accuracy * 100}% accuracy` })
 
-        toast({
-          title: "Training Complete",
-          description: `Model trained with ${result.accuracy * 100}% accuracy`,
-        })
-
-        // Refresh models list
         const modelsResponse = await pythonBackendService.listModels()
-        if (modelsResponse.models) {
-          setPythonModels(modelsResponse.models)
-        }
+        if (modelsResponse.models) setPythonModels(modelsResponse.models)
 
-        // Notify parent component
-        if (onModelTrained) {
-          onModelTrained(result.modelId)
-        }
+        if (onModelTrained) onModelTrained(result.modelId)
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Training error:", error)
       addLog("error", `Training error: ${error.message}`)
-
-      toast({
-        title: "Training Error",
-        description: error.message,
-        variant: "destructive",
-      })
+      toast({ title: "Training Error", description: error.message, variant: "destructive" })
     } finally {
       setIsTraining(false)
     }
   }
 
-  // Save the model
   const saveModel = async () => {
     if (!trainedModelId) {
-      toast({
-        title: "No Model Available",
-        description: "Please train a model first.",
-        variant: "destructive",
-      })
+      toast({ title: "No Model Available", description: "Please train a model first.", variant: "destructive" })
       return
     }
-
     setIsSaving(true)
-
     try {
       const result = await pythonBackendService.saveModel(modelName)
-
       if (result.success) {
         addLog("success", `Model saved successfully with ID: ${result.modelId}`)
-
-        toast({
-          title: "Model Saved",
-          description: `Model saved as "${modelName}"`,
-        })
-
-        // Refresh models list
+        toast({ title: "Model Saved", description: `Model saved as \"${modelName}\"` })
         const modelsResponse = await pythonBackendService.listModels()
-        if (modelsResponse.models) {
-          setPythonModels(modelsResponse.models)
-        }
+        if (modelsResponse.models) setPythonModels(modelsResponse.models)
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Save error:", error)
       addLog("error", `Save error: ${error.message}`)
-
-      toast({
-        title: "Save Error",
-        description: error.message,
-        variant: "destructive",
-      })
+      toast({ title: "Save Error", description: error.message, variant: "destructive" })
     } finally {
       setIsSaving(false)
     }
   }
 
-  // Evaluate the model
   const evaluateModel = async () => {
     if (!trainedModelId && !selectedPythonModel) {
       toast({
@@ -279,78 +226,47 @@ export function AdvancedModelTrainer({ gestures = [], onModelTrained }: Advanced
       })
       return
     }
-
     setIsEvaluating(true)
-
     try {
-      // If we have a selected model that's not the currently trained one, load it first
       if (selectedPythonModel && selectedPythonModel !== trainedModelId) {
         addLog("info", `Loading model ${selectedPythonModel} for evaluation...`)
         await pythonBackendService.loadModel(selectedPythonModel)
       }
-
       addLog("info", "Evaluating model using cross-validation...")
-
       const result = await pythonBackendService.evaluateModel()
-
       if (result.success) {
         setEvaluationResults(result.evaluation)
-
         if (result.evaluation.cross_val_accuracy) {
           addLog("success", `Cross-validation accuracy: ${result.evaluation.cross_val_accuracy * 100}%`)
         } else if (result.evaluation.accuracy) {
           addLog("success", `Test accuracy: ${result.evaluation.accuracy * 100}%`)
         }
-
-        toast({
-          title: "Evaluation Complete",
-          description: "Model evaluation completed successfully.",
-        })
-
-        // Switch to evaluation tab
+        toast({ title: "Evaluation Complete", description: "Model evaluation completed successfully." })
         setActiveTab("evaluation")
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Evaluation error:", error)
       addLog("error", `Evaluation error: ${error.message}`)
-
-      toast({
-        title: "Evaluation Error",
-        description: error.message,
-        variant: "destructive",
-      })
+      toast({ title: "Evaluation Error", description: error.message, variant: "destructive" })
     } finally {
       setIsEvaluating(false)
     }
   }
 
-  // Load a model
   const loadModel = async (modelId: string) => {
     try {
       addLog("info", `Loading model ${modelId}...`)
-
       const result = await pythonBackendService.loadModel(modelId)
-
       if (result.success) {
         setSelectedPythonModel(modelId)
         setTrainedModelId(modelId)
-
         addLog("success", `Model ${modelId} loaded successfully`)
-
-        toast({
-          title: "Model Loaded",
-          description: `Model ${modelId} loaded successfully`,
-        })
+        toast({ title: "Model Loaded", description: `Model ${modelId} loaded successfully` })
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Load error:", error)
       addLog("error", `Load error: ${error.message}`)
-
-      toast({
-        title: "Load Error",
-        description: error.message,
-        variant: "destructive",
-      })
+      toast({ title: "Load Error", description: error.message, variant: "destructive" })
     }
   }
 
