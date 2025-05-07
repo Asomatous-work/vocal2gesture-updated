@@ -5,10 +5,11 @@ import type React from "react"
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Camera, CameraOff, Volume2, RefreshCw, ToggleLeft, ToggleRight } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
+import { Camera, CameraOff, Volume2, RefreshCw, ToggleRight, ToggleLeft } from "lucide-react"
 import { HolisticDetection } from "@/lib/mediapipe-holistic"
-import { PhraseManager, type Phrase } from "@/components/phrase-manager"
+import { PhraseManager } from "@/components/phrase-manager"
+import { BackButton } from "@/components/back-button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 interface GestureModel {
@@ -23,6 +24,13 @@ interface GestureModel {
     finalLoss: number
     timestamp: string
   }
+}
+
+interface Phrase {
+  id: string
+  name: string
+  gestures: string[]
+  translation?: string
 }
 
 export default function SignToSpeechPhrasesPage() {
@@ -722,7 +730,11 @@ export default function SignToSpeechPhrasesPage() {
   }, [])
 
   return (
-    <div className="container mx-auto px-4 py-12">
+    <div className="container mx-auto px-4 py-8">
+      <div className="mb-4">
+        <BackButton />
+      </div>
+
       <div className="text-center mb-12">
         <h1 className="text-3xl md:text-4xl font-bold mb-4">Sign Language Phrase Detection</h1>
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
