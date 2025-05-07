@@ -1,13 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { SignImageUpload } from "@/components/sign-image-upload"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { BackButton } from "@/components/back-button"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Search, Trash2, RefreshCw } from "lucide-react"
+import { Search, Trash2, RefreshCw, Upload, FileUp } from "lucide-react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { modelManager } from "@/lib/model-manager"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
@@ -25,10 +25,56 @@ export default function SignImageLibraryPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [selectedTab, setSelectedTab] = useState("gallery")
   const [selectedImage, setSelectedImage] = useState<SignImage | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const dropZoneRef = useRef<HTMLDivElement>(null)
   const { toast } = useToast()
 
   useEffect(() => {
     loadImages()
+
+    // Set up drag and drop event listeners for the entire page
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      setIsDragging(true)
+    }
+
+    const handleDragLeave = (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+
+      // Only set dragging to false if we're leaving the window
+      // This prevents flickering when moving between elements
+      if (!e.relatedTarget || !(e.relatedTarget as Node).parentElement) {
+        setIsDragging(false)
+      }
+    }
+
+    const handleDrop = async (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      setIsDragging(false)
+
+      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+        await handleFiles(e.dataTransfer.files)
+      }
+    }
+
+    // Add event listeners to the document
+    document.addEventListener("dragover", handleDragOver)
+    document.addEventListener("dragleave", handleDragLeave)
+    document.addEventListener("drop", handleDrop)
+
+    return () => {
+      // Clean up event listeners
+      document.removeEventListener("dragover", handleDragOver)
+      document.removeEventListener("dragleave", handleDragLeave)
+      document.removeEventListener("drop", handleDrop)
+    }
   }, [])
 
   const loadImages = async () => {
@@ -179,6 +225,57 @@ export default function SignImageLibraryPage() {
     }
   }
 
+  // Handle dropped or selected files
+  const handleFiles = async (files: FileList) => {
+    if (files.length === 0) return
+
+    // Switch to upload tab
+    setSelectedTab("upload")
+
+    // If we have multiple files, just notify the user and let the upload component handle it
+    if (files.length > 1) {
+      toast({
+        title: "Multiple Files Detected",
+        description: "Please upload and label each image individually.",
+      })
+      return
+    }
+
+    const file = files[0]
+
+    // Check file type
+    if (!file.type.startsWith("image/")) {
+      toast({
+        title: "Invalid File",
+        description: "Please select an image file.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // Check file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: "File Too Large",
+        description: "Please select an image smaller than 5MB.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // Pass the file to the upload component by triggering a click on the file input
+    if (fileInputRef.current) {
+      // Create a new DataTransfer object
+      const dataTransfer = new DataTransfer()
+      dataTransfer.items.add(file)
+      fileInputRef.current.files = dataTransfer.files
+
+      // Trigger change event
+      const event = new Event("change", { bubbles: true })
+      fileInputRef.current.dispatchEvent(event)
+    }
+  }
+
   const filteredImages = signImages.filter((image) => image.word.toLowerCase().includes(searchQuery.toLowerCase()))
 
   const speakWord = (word: string) => {
@@ -192,6 +289,17 @@ export default function SignImageLibraryPage() {
     <main className="container mx-auto py-6 px-4 md:py-8 max-w-6xl">
       <BackButton />
       <h1 className="text-3xl font-bold mb-6 text-center">Sign Image Library</h1>
+
+      {/* Global drag overlay */}
+      {isDragging && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 pointer-events-none">
+          <div className="bg-white dark:bg-gray-800 p-8 rounded-lg shadow-lg text-center">
+            <FileUp className="h-16 w-16 mx-auto mb-4 text-primary" />
+            <h2 className="text-2xl font-bold mb-2">Drop Image Here</h2>
+            <p className="text-muted-foreground">Release to upload your sign language image</p>
+          </div>
+        </div>
+      )}
 
       <Tabs value={selectedTab} onValueChange={setSelectedTab} className="w-full">
         <TabsList className="grid w-full grid-cols-2 mb-6">
@@ -315,7 +423,33 @@ export default function SignImageLibraryPage() {
         </TabsContent>
 
         <TabsContent value="upload">
-          <SignImageUpload onImageUploaded={handleImageUploaded} />
+          <div
+            ref={dropZoneRef}
+            className={`border-2 border-dashed rounded-lg p-8 mb-6 transition-colors ${
+              isDragging ? "border-primary bg-primary/5" : "border-gray-300 dark:border-gray-700"
+            }`}
+          >
+            <div className="flex flex-col items-center justify-center text-center">
+              <FileUp className="h-12 w-12 mb-4 text-muted-foreground" />
+              <h3 className="text-lg font-medium mb-2">Drag and drop your sign language image here</h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                Or click the button below to select an image from your device
+              </p>
+              <Button onClick={() => fileInputRef.current?.click()}>
+                <Upload className="h-4 w-4 mr-2" />
+                Select Image
+              </Button>
+              <input
+                type="file"
+                ref={fileInputRef}
+                className="hidden"
+                accept="image/*"
+                onChange={(e) => e.target.files && handleFiles(e.target.files)}
+              />
+            </div>
+          </div>
+
+          <SignImageUpload onImageUploaded={handleImageUploaded} fileInputRef={fileInputRef} />
         </TabsContent>
       </Tabs>
     </main>

@@ -1,34 +1,80 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { motion } from "framer-motion"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { Camera, CameraOff, Volume2, RefreshCw } from "lucide-react"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
+import { Camera, CameraOff, Volume2, VolumeX, Loader2, AlertTriangle } from "lucide-react"
 import { HolisticDetection } from "@/lib/mediapipe-holistic"
+import { modelManager } from "@/lib/model-manager"
+import { LoadingSpinner } from "@/components/ui/loading-spinner"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { MediaPipeLoader } from "@/components/mediapipe-loader"
+import {
+  drawLandmarks,
+  drawConnectors,
+  HAND_CONNECTIONS,
+  POSE_CONNECTIONS,
+  FACEMESH_TESSELATION,
+} from "@/lib/pose-utils"
 
 export function SignToSpeechDemo() {
   const [isCameraActive, setIsCameraActive] = useState(false)
-  const [isProcessing, setIsProcessing] = useState(false)
-  const [recognizedText, setRecognizedText] = useState("")
+  const [isRecognizing, setIsRecognizing] = useState(false)
+  const [isSpeechEnabled, setIsSpeechEnabled] = useState(true)
+  const [recognizedGesture, setRecognizedGesture] = useState<string>("")
+  const [isLoading, setIsLoading] = useState(true)
+  const [isCameraInitializing, setIsCameraInitializing] = useState(false)
+  const [handDetected, setHandDetected] = useState(false)
+  const [mediaPipeLoaded, setMediaPipeLoaded] = useState(false)
+  const [detectionStatus, setDetectionStatus] = useState<"initializing" | "ready" | "running" | "error" | "stopped">(
+    "initializing",
+  )
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const holisticRef = useRef<HolisticDetection | null>(null)
+  const recognitionTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const lastDetectionTimeRef = useRef<number>(0)
   const { toast } = useToast()
 
-  // Sample hand gestures and their meanings (for demo purposes)
-  const sampleGestures = ["Hello", "How are you", "I am fine", "Thank you", "Good morning"]
-
+  // Initialize models
   useEffect(() => {
+    const initModels = async () => {
+      setIsLoading(true)
+      try {
+        await modelManager.loadFromLocalStorage()
+        setIsLoading(false)
+      } catch (error) {
+        console.error("Error initializing models:", error)
+        setErrorMessage("Failed to load gesture models. Please try again.")
+        setIsLoading(false)
+      }
+    }
+
+    initModels()
+
     return () => {
-      // Clean up camera stream when component unmounts
+      // Clean up
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop())
+      }
+      if (holisticRef.current) {
+        holisticRef.current.stop()
       }
     }
   }, [])
 
+  // Handle MediaPipe loaded
+  const handleMediaPipeLoaded = () => {
+    setMediaPipeLoaded(true)
+    setDetectionStatus("ready")
+  }
+
+  // Toggle camera
   const toggleCamera = async () => {
     if (isCameraActive) {
       // Stop the camera
@@ -36,10 +82,18 @@ export function SignToSpeechDemo() {
         streamRef.current.getTracks().forEach((track) => track.stop())
         streamRef.current = null
       }
+
+      if (holisticRef.current) {
+        holisticRef.current.stop()
+      }
+
       setIsCameraActive(false)
-      setRecognizedText("")
+      setIsRecognizing(false)
+      setHandDetected(false)
+      setDetectionStatus("stopped")
     } else {
       // Start the camera
+      setIsCameraInitializing(true)
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
@@ -53,6 +107,14 @@ export function SignToSpeechDemo() {
 
         if (videoRef.current) {
           videoRef.current.srcObject = stream
+          videoRef.current.play()
+
+          // Wait for video to be ready
+          await new Promise((resolve) => {
+            if (videoRef.current) {
+              videoRef.current.onloadedmetadata = () => resolve(null)
+            }
+          })
         }
 
         setIsCameraActive(true)
@@ -60,6 +122,12 @@ export function SignToSpeechDemo() {
           title: "Camera Activated",
           description: "Make hand gestures in front of the camera.",
         })
+
+        // Initialize holistic detection
+        await initializeHolistic()
+
+        // Auto-start recognition
+        setIsRecognizing(true)
       } catch (error) {
         console.error("Error accessing camera:", error)
         toast({
@@ -67,307 +135,419 @@ export function SignToSpeechDemo() {
           description: "Could not access your camera. Please check permissions.",
           variant: "destructive",
         })
+        setErrorMessage("Could not access your camera. Please check permissions.")
+        setDetectionStatus("error")
+      } finally {
+        setIsCameraInitializing(false)
       }
-    }
-  }
-
-  const processGesture = () => {
-    if (!isCameraActive) {
-      toast({
-        title: "Camera Inactive",
-        description: "Please activate the camera first.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    setIsProcessing(true)
-
-    // Capture current frame from video to canvas
-    if (videoRef.current && canvasRef.current) {
-      const context = canvasRef.current.getContext("2d")
-      if (context) {
-        canvasRef.current.width = videoRef.current.videoWidth
-        canvasRef.current.height = videoRef.current.videoHeight
-        context.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height)
-      }
-    }
-
-    // Simulate processing delay and random gesture recognition
-    setTimeout(() => {
-      // For demo purposes, randomly select a gesture
-      const randomGesture = sampleGestures[Math.floor(Math.random() * sampleGestures.length)]
-      setRecognizedText(randomGesture)
-      setIsProcessing(false)
-
-      // Simulate text-to-speech
-      if ("speechSynthesis" in window) {
-        const utterance = new SpeechSynthesisUtterance(randomGesture)
-        window.speechSynthesis.speak(utterance)
-      }
-    }, 2000)
-  }
-
-  const resetDemo = () => {
-    setRecognizedText("")
-    if (isCameraActive && streamRef.current) {
-      // Keep camera on but reset recognized text
     }
   }
 
   // Initialize MediaPipe Holistic
-  useEffect(() => {
-    if (isCameraActive && !isProcessing) {
-      const initializeHolistic = async () => {
-        const holisticDetection = new HolisticDetection({
-          onResults: (results) => {
-            if (!canvasRef.current || !videoRef.current) return
+  const initializeHolistic = async () => {
+    if (holisticRef.current) {
+      holisticRef.current.stop()
+    }
 
-            const ctx = canvasRef.current.getContext("2d")
-            if (!ctx) return
+    try {
+      holisticRef.current = new HolisticDetection({
+        onResults: (results) => {
+          drawResults(results)
 
-            const width = videoRef.current.videoWidth
-            const height = videoRef.current.videoHeight
+          // Check if hands are detected
+          const hasLeftHand = results.leftHandLandmarks && results.leftHandLandmarks.length > 0
+          const hasRightHand = results.rightHandLandmarks && results.rightHandLandmarks.length > 0
 
-            canvasRef.current.width = width
-            canvasRef.current.height = height
+          // Update hand detection status
+          setHandDetected(hasLeftHand || hasRightHand)
 
-            // Clear canvas
-            ctx.clearRect(0, 0, width, height)
-
-            // Draw video frame
-            ctx.drawImage(videoRef.current, 0, 0, width, height)
-
-            // Draw face landmarks
-            if (results.faceLandmarks) {
-              ctx.fillStyle = "rgba(255, 0, 0, 0.5)"
-              for (const landmark of results.faceLandmarks) {
-                ctx.beginPath()
-                ctx.arc(landmark.x * width, landmark.y * height, 1, 0, 2 * Math.PI)
-                ctx.fill()
-              }
+          // Only process for gesture recognition if we're in recognition mode
+          if (isRecognizing && (hasLeftHand || hasRightHand)) {
+            // Check if enough time has passed since last detection (throttle)
+            const now = Date.now()
+            if (now - lastDetectionTimeRef.current >= 500) {
+              // 500ms delay between recognitions
+              recognizeGesture(results)
+              lastDetectionTimeRef.current = now
             }
+          }
+        },
+        onError: (error) => {
+          console.error("MediaPipe Holistic error:", error)
+          setErrorMessage(`MediaPipe error: ${error.message}`)
+          setDetectionStatus("error")
+        },
+        onStatusChange: (status) => {
+          setDetectionStatus(status)
+        },
+        // More sensitive detection settings for demo
+        minDetectionConfidence: 0.2,
+        minTrackingConfidence: 0.2,
+      })
 
-            // Draw pose landmarks
-            if (results.poseLandmarks) {
-              ctx.fillStyle = "rgba(0, 255, 0, 0.5)"
-              for (const landmark of results.poseLandmarks) {
-                ctx.beginPath()
-                ctx.arc(landmark.x * width, landmark.y * height, 3, 0, 2 * Math.PI)
-                ctx.fill()
-              }
-            }
+      await holisticRef.current.initialize()
 
-            // Draw hand landmarks
-            const drawHand = (landmarks: any[], color: string) => {
-              if (!landmarks || landmarks.length === 0) return
+      if (videoRef.current && isCameraActive) {
+        await holisticRef.current.start(videoRef.current)
+      }
+    } catch (error) {
+      console.error("Failed to initialize MediaPipe Holistic:", error)
+      setErrorMessage(`Failed to initialize detection: ${error.message}`)
+      setDetectionStatus("error")
+    }
+  }
 
-              ctx.fillStyle = color
-              for (const landmark of landmarks) {
-                ctx.beginPath()
-                ctx.arc(landmark.x * width, landmark.y * height, 5, 0, 2 * Math.PI)
-                ctx.fill()
-              }
+  // Draw the detection results on canvas
+  const drawResults = (results: any) => {
+    if (!canvasRef.current || !videoRef.current) return
 
-              // Connect landmarks with lines
-              ctx.strokeStyle = color
-              ctx.lineWidth = 2
+    const ctx = canvasRef.current.getContext("2d")
+    if (!ctx) return
 
-              // Connect fingers
-              const fingers = [
-                [0, 1, 2, 3, 4], // thumb
-                [0, 5, 6, 7, 8], // index
-                [0, 9, 10, 11, 12], // middle
-                [0, 13, 14, 15, 16], // ring
-                [0, 17, 18, 19, 20], // pinky
-              ]
+    const width = videoRef.current.videoWidth
+    const height = videoRef.current.videoHeight
 
-              for (const finger of fingers) {
-                ctx.beginPath()
-                for (let i = 0; i < finger.length; i++) {
-                  const landmark = landmarks[finger[i]]
-                  if (i === 0) {
-                    ctx.moveTo(landmark.x * width, landmark.y * height)
-                  } else {
-                    ctx.lineTo(landmark.x * width, landmark.y * height)
-                  }
-                }
-                ctx.stroke()
-              }
-            }
+    canvasRef.current.width = width
+    canvasRef.current.height = height
 
-            drawHand(results.leftHandLandmarks, "rgba(0, 0, 255, 0.7)")
-            drawHand(results.rightHandLandmarks, "rgba(255, 0, 255, 0.7)")
-          },
-          onError: (error) => {
-            console.error("MediaPipe Holistic error:", error)
-          },
-        })
+    // Clear canvas
+    ctx.clearRect(0, 0, width, height)
 
-        await holisticDetection.initialize()
-        await holisticDetection.start(videoRef.current!)
+    // Draw video frame
+    ctx.drawImage(videoRef.current, 0, 0, width, height)
 
-        return () => {
-          holisticDetection.stop()
-        }
+    // Draw hand landmarks
+    if (results.leftHandLandmarks) {
+      drawConnectors(ctx, results.leftHandLandmarks, HAND_CONNECTIONS, { color: "rgba(0, 0, 255, 0.7)", lineWidth: 2 })
+      drawLandmarks(ctx, results.leftHandLandmarks, { color: "rgba(0, 0, 255, 0.7)", radius: 3 })
+    }
+
+    if (results.rightHandLandmarks) {
+      drawConnectors(ctx, results.rightHandLandmarks, HAND_CONNECTIONS, {
+        color: "rgba(255, 0, 255, 0.7)",
+        lineWidth: 2,
+      })
+      drawLandmarks(ctx, results.rightHandLandmarks, { color: "rgba(255, 0, 255, 0.7)", radius: 3 })
+    }
+
+    // Draw pose landmarks (simplified)
+    if (results.poseLandmarks) {
+      drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, { color: "rgba(0, 255, 0, 0.5)", lineWidth: 2 })
+      drawLandmarks(ctx, results.poseLandmarks, { color: "rgba(0, 255, 0, 0.5)", radius: 2 })
+    }
+
+    // Draw face mesh (simplified)
+    if (results.faceLandmarks) {
+      drawConnectors(ctx, results.faceLandmarks, FACEMESH_TESSELATION, {
+        color: "rgba(255, 255, 255, 0.2)",
+        lineWidth: 1,
+      })
+    }
+
+    // Add recognition result if available
+    if (isRecognizing && recognizedGesture) {
+      // Draw floating window in bottom-left corner
+      const padding = 10
+      const boxWidth = 200
+      const boxHeight = 60
+      const boxX = padding
+      const boxY = height - boxHeight - padding
+
+      // Draw background
+      ctx.fillStyle = "rgba(0, 0, 0, 0.7)"
+      ctx.fillRect(boxX, boxY, boxWidth, boxHeight)
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.5)"
+      ctx.lineWidth = 1
+      ctx.strokeRect(boxX, boxY, boxWidth, boxHeight)
+
+      // Draw text
+      ctx.fillStyle = "white"
+      ctx.font = "bold 18px Arial"
+      ctx.textAlign = "left"
+      ctx.fillText(recognizedGesture, boxX + 10, boxY + 25)
+
+      // Draw confidence
+      ctx.font = "14px Arial"
+      ctx.fillText(`Detected Sign`, boxX + 10, boxY + 45)
+    }
+  }
+
+  // Recognize gesture using model manager
+  const recognizeGesture = (results: any) => {
+    const gestures = modelManager.getGestures()
+    if (!gestures || gestures.length === 0) return
+
+    let bestMatch = ""
+    let highestConfidence = 0
+
+    // Extract landmarks for comparison
+    const currentLandmarks = {
+      pose: results.poseLandmarks || [],
+      leftHand: results.leftHandLandmarks || [],
+      rightHand: results.rightHandLandmarks || [],
+      face: results.faceLandmarks || [],
+    }
+
+    // For each gesture in the model
+    for (const gesture of gestures) {
+      let totalConfidence = 0
+      let sampleCount = 0
+
+      // Compare with each sample of this gesture
+      for (const sample of gesture.landmarks) {
+        // Calculate similarity between current landmarks and this sample
+        const similarity = calculateSimilarity(currentLandmarks, sample)
+
+        totalConfidence += similarity
+        sampleCount++
       }
 
-      const cleanup = initializeHolistic()
-      return () => {
-        cleanup.then((cleanupFn) => cleanupFn && cleanupFn())
+      // Calculate average confidence across all samples
+      const avgConfidence = sampleCount > 0 ? totalConfidence / sampleCount : 0
+
+      // Track the best match
+      if (avgConfidence > highestConfidence && avgConfidence > 0.6) {
+        highestConfidence = avgConfidence
+        bestMatch = gesture.name
       }
     }
-  }, [isCameraActive, isProcessing])
+
+    // Only update recognized gesture if confidence is above threshold
+    if (bestMatch) {
+      setRecognizedGesture(bestMatch)
+
+      // Speak the gesture if speech is enabled
+      if (isSpeechEnabled) {
+        speakText(bestMatch)
+      }
+    }
+  }
+
+  // Calculate similarity between two landmark sets
+  const calculateSimilarity = (current: any, sample: any): number => {
+    let totalSimilarity = 0
+    let pointCount = 0
+
+    // Compare right hand landmarks
+    if (current.rightHand.length > 0 && sample.rightHand?.length > 0) {
+      const handSimilarity = compareHandLandmarks(current.rightHand, sample.rightHand)
+      totalSimilarity += handSimilarity.similarity
+      pointCount += handSimilarity.count
+    }
+
+    // Compare left hand landmarks
+    if (current.leftHand.length > 0 && sample.leftHand?.length > 0) {
+      const handSimilarity = compareHandLandmarks(current.leftHand, sample.leftHand)
+      totalSimilarity += handSimilarity.similarity
+      pointCount += handSimilarity.count
+    }
+
+    // Return average similarity
+    return pointCount > 0 ? totalSimilarity / pointCount : 0
+  }
+
+  // Compare hand landmarks and return similarity score
+  const compareHandLandmarks = (current: any[], sample: any[]) => {
+    let totalSimilarity = 0
+    let count = 0
+
+    // Compare each landmark point
+    for (let i = 0; i < Math.min(current.length, sample.length); i++) {
+      const currentPoint = current[i]
+      const samplePoint = sample[i]
+
+      if (currentPoint && samplePoint) {
+        // Calculate Euclidean distance
+        const distance = Math.sqrt(
+          Math.pow(currentPoint.x - samplePoint.x, 2) +
+            Math.pow(currentPoint.y - samplePoint.y, 2) +
+            Math.pow((currentPoint.z || 0) - (samplePoint.z || 0), 2),
+        )
+
+        // Convert distance to similarity (1 = identical, 0 = completely different)
+        const similarity = Math.max(0, 1 - distance * 5)
+
+        totalSimilarity += similarity
+        count++
+      }
+    }
+
+    return { similarity: totalSimilarity, count }
+  }
+
+  // Speak text using speech synthesis
+  const speakText = (text: string) => {
+    if (!isSpeechEnabled) return
+
+    // Cancel any ongoing speech
+    window.speechSynthesis.cancel()
+
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.rate = 0.9
+    utterance.pitch = 1.0
+    window.speechSynthesis.speak(utterance)
+  }
+
+  // Toggle speech output
+  const toggleSpeech = () => {
+    setIsSpeechEnabled(!isSpeechEnabled)
+
+    // Cancel any ongoing speech when disabled
+    if (isSpeechEnabled) {
+      window.speechSynthesis.cancel()
+    }
+  }
+
+  // Retry detection after error
+  const handleRetry = async () => {
+    setErrorMessage(null)
+
+    // Stop any existing camera
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+    }
+
+    if (holisticRef.current) {
+      holisticRef.current.stop()
+    }
+
+    setIsCameraActive(false)
+    setIsRecognizing(false)
+
+    // Wait a moment before retrying
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+
+    // Try to initialize again
+    if (mediaPipeLoaded) {
+      toggleCamera()
+    } else {
+      setDetectionStatus("initializing")
+    }
+  }
 
   return (
-    <section
-      id="sign-to-speech"
-      className="py-20 bg-gradient-to-br from-purple-50 via-white to-pink-50 dark:from-gray-900 dark:via-background dark:to-gray-900"
-    >
-      <div className="container mx-auto px-4">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.5 }}
-          className="text-center mb-12"
-        >
-          <h2 className="text-3xl md:text-4xl font-bold mb-4">Sign to Speech Translation</h2>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Use hand gestures in front of your camera and have them translated to text and speech.
-          </p>
-        </motion.div>
+    <div className="w-full max-w-4xl mx-auto">
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+        <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-purple-50 to-pink-50 dark:from-gray-800 dark:to-gray-900">
+          <CardHeader>
+            <CardTitle>Sign to Speech Translation</CardTitle>
+            <CardDescription>
+              Make hand gestures in front of the camera to translate sign language into speech
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            {!mediaPipeLoaded ? (
+              <div className="p-6">
+                <MediaPipeLoader onLoaded={handleMediaPipeLoaded} />
+              </div>
+            ) : (
+              <>
+                <div className="relative aspect-video bg-black">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className={`absolute inset-0 w-full h-full object-cover ${isCameraActive ? "opacity-100" : "opacity-0"}`}
+                  />
+                  <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
-          <motion.div
-            initial={{ opacity: 0, x: -20 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5 }}
-          >
-            <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-pink-50 to-purple-50 dark:from-gray-800 dark:to-gray-900">
-              <CardContent className="p-8">
-                <div className="flex flex-col items-center">
-                  <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden mb-6">
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      className={`absolute inset-0 w-full h-full object-cover ${isCameraActive ? "opacity-100" : "opacity-0"}`}
-                    />
-                    <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
-                    {!isCameraActive && (
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <p className="text-white">Camera is off</p>
-                      </div>
-                    )}
-                  </div>
+                  {/* Status overlay */}
+                  {isCameraActive && (
+                    <div
+                      className={`absolute top-2 left-2 right-2 px-3 py-2 rounded text-sm font-medium text-center ${
+                        handDetected ? "bg-green-500/70 text-white" : "bg-red-500/70 text-white"
+                      }`}
+                    >
+                      {handDetected ? "Hand Detected ✓" : "No Hand Detected - Please position your hand in view"}
+                    </div>
+                  )}
 
+                  {/* Error message */}
+                  {errorMessage && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/70">
+                      <Alert variant="destructive" className="max-w-md">
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertTitle>Detection Error</AlertTitle>
+                        <AlertDescription>{errorMessage}</AlertDescription>
+                        <Button variant="outline" size="sm" onClick={handleRetry} className="mt-2">
+                          Retry
+                        </Button>
+                      </Alert>
+                    </div>
+                  )}
+
+                  {!isCameraActive && !isLoading && !errorMessage && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      {isCameraInitializing ? (
+                        <LoadingSpinner text="Initializing camera..." />
+                      ) : (
+                        <Button
+                          onClick={toggleCamera}
+                          className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
+                        >
+                          <Camera className="mr-2 h-4 w-4" />
+                          Start Camera
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  {isLoading && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <LoadingSpinner size="lg" text="Loading models..." />
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-4 flex flex-wrap gap-2 md:gap-4 justify-between items-center">
                   <Button
                     onClick={toggleCamera}
-                    size="lg"
-                    className={`rounded-full w-16 h-16 mb-6 ${
+                    className={`${
                       isCameraActive
                         ? "bg-red-500 hover:bg-red-600"
-                        : "bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700"
+                        : "bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
                     }`}
+                    disabled={isLoading || isCameraInitializing || !!errorMessage}
                   >
-                    {isCameraActive ? <CameraOff className="h-6 w-6" /> : <Camera className="h-6 w-6" />}
+                    {isCameraInitializing ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Initializing...
+                      </>
+                    ) : isCameraActive ? (
+                      <>
+                        <CameraOff className="mr-2 h-4 w-4" />
+                        Stop Camera
+                      </>
+                    ) : (
+                      <>
+                        <Camera className="mr-2 h-4 w-4" />
+                        Start Camera
+                      </>
+                    )}
                   </Button>
 
-                  <div className="flex gap-4">
-                    <Button
-                      onClick={processGesture}
-                      disabled={!isCameraActive || isProcessing}
-                      className="bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700"
-                    >
-                      {isProcessing ? (
-                        <>
-                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                          Processing...
-                        </>
-                      ) : (
-                        "Recognize Gesture"
-                      )}
-                    </Button>
-
-                    <Button variant="outline" onClick={resetDemo} disabled={!recognizedText}>
-                      Reset
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5 }}
-          >
-            <div className="flex flex-col items-center">
-              <Card className="w-full border-none shadow-lg bg-background">
-                <CardContent className="p-8">
-                  <div className="text-center mb-6">
-                    <h3 className="text-xl font-semibold mb-2">Recognized Text</h3>
-                    <p className="text-muted-foreground text-sm">The translation of your sign language gestures</p>
-                  </div>
-
-                  <div className="min-h-[200px] flex items-center justify-center">
-                    {recognizedText ? (
-                      <div className="text-center">
-                        <p className="text-3xl font-bold mb-6">{recognizedText}</p>
-                        <Button
-                          onClick={() => {
-                            if ("speechSynthesis" in window) {
-                              const utterance = new SpeechSynthesisUtterance(recognizedText)
-                              window.speechSynthesis.speak(utterance)
-                            }
-                          }}
-                          className="bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-700 hover:to-purple-700"
-                        >
-                          <Volume2 className="mr-2 h-4 w-4" />
-                          Speak Again
-                        </Button>
-                      </div>
+                  <Button variant="outline" onClick={toggleSpeech} disabled={!isCameraActive} className="h-10">
+                    {isSpeechEnabled ? (
+                      <>
+                        <Volume2 className="mr-2 h-4 w-4" />
+                        Speech On
+                      </>
                     ) : (
-                      <p className="text-muted-foreground text-center">
-                        {isProcessing
-                          ? "Processing your gestures..."
-                          : "Recognized text will appear here after you make hand gestures"}
-                      </p>
+                      <>
+                        <VolumeX className="mr-2 h-4 w-4" />
+                        Speech Off
+                      </>
                     )}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <div className="mt-8 p-4 bg-muted/50 rounded-lg">
-                <h4 className="font-semibold mb-2">How It Works</h4>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Our system uses advanced computer vision to detect hand landmarks and recognize Indian Sign Language
-                  gestures.
-                </p>
-                <div className="grid grid-cols-3 gap-2">
-                  {[1, 2, 3].map((i) => (
-                    <div
-                      key={i}
-                      className="aspect-square bg-background rounded-md p-2 flex items-center justify-center"
-                    >
-                      <img
-                        src={`/placeholder.svg?key=qk5b1&height=80&width=80&query=hand landmark detection ${i}`}
-                        alt={`Hand landmark visualization ${i}`}
-                        className="max-w-full max-h-full"
-                      />
-                    </div>
-                  ))}
+                  </Button>
                 </div>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      </div>
-    </section>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </motion.div>
+    </div>
   )
 }

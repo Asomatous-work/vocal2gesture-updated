@@ -1,4 +1,6 @@
 // Fix the NPM_TOKEN access issue by removing any client-side environment variable access
+import type { AnimationData } from "./animation-data"
+
 export interface GestureData {
   name: string
   landmarks: any[]
@@ -660,6 +662,109 @@ class ModelManager {
   // Get GitHub configuration (for use in other services)
   public getGitHubConfig() {
     return this.githubConfig
+  }
+
+  // Get all animations
+  getAnimations(): AnimationData[] {
+    try {
+      const animationsJson = localStorage.getItem("signLanguageAnimations")
+      if (!animationsJson) return []
+      return JSON.parse(animationsJson)
+    } catch (error) {
+      console.error("Error getting animations:", error)
+      return []
+    }
+  }
+
+  // Get animation by word
+  getAnimation(word: string): AnimationData | null {
+    const animations = this.getAnimations()
+    return animations.find((a) => a.word.toLowerCase() === word.toLowerCase()) || null
+  }
+
+  // Save animation
+  saveAnimation(animation: AnimationData): boolean {
+    try {
+      const animations = this.getAnimations()
+
+      // Check if animation already exists
+      const index = animations.findIndex((a) => a.word.toLowerCase() === animation.word.toLowerCase())
+
+      if (index >= 0) {
+        // Update existing animation
+        animations[index] = animation
+      } else {
+        // Add new animation
+        animations.push(animation)
+      }
+
+      localStorage.setItem("signLanguageAnimations", JSON.stringify(animations))
+      return true
+    } catch (error) {
+      console.error("Error saving animation:", error)
+      return false
+    }
+  }
+
+  // Remove animation
+  removeAnimation(word: string): boolean {
+    try {
+      const animations = this.getAnimations()
+      const updatedAnimations = animations.filter((a) => a.word.toLowerCase() !== word.toLowerCase())
+
+      if (updatedAnimations.length === animations.length) {
+        return false // No animation was removed
+      }
+
+      localStorage.setItem("signLanguageAnimations", JSON.stringify(updatedAnimations))
+      return true
+    } catch (error) {
+      console.error("Error removing animation:", error)
+      return false
+    }
+  }
+
+  // Save animation to GitHub
+  async saveAnimationToGitHub(animation: AnimationData): Promise<boolean> {
+    if (!this.isGitHubConfigured()) {
+      return false
+    }
+
+    try {
+      const { owner, repo, branch, token } = this.githubConfig
+
+      // Create a filename based on the word
+      const filename = `animations/${animation.word.replace(/[^a-z0-9]/gi, "_").toLowerCase()}.json`
+
+      // Convert animation to JSON string
+      const content = JSON.stringify(animation, null, 2)
+
+      // Save to GitHub
+      const response = await fetch("/api/github/save", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          owner,
+          repo,
+          branch,
+          path: filename,
+          content: btoa(content), // Base64 encode the content
+          message: `Add animation for ${animation.word}`,
+          token,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`Failed to save animation to GitHub: ${response.statusText}`)
+      }
+
+      return true
+    } catch (error) {
+      console.error("Error saving animation to GitHub:", error)
+      return false
+    }
   }
 }
 

@@ -10,9 +10,16 @@ import { useToast } from "@/components/ui/use-toast"
 import { Camera, CameraOff, Video, VideoOff, Save, Trash, Play, Pause } from "lucide-react"
 import { HolisticDetection } from "@/lib/mediapipe-holistic"
 import { MediaPipeLoader } from "@/components/mediapipe-loader"
-import { type AnimationData, type AnimationFrame, animationUtils } from "@/lib/animation-data"
+import { type AnimationData, type AnimationFrame, createEmptyAnimation, compressAnimation } from "@/lib/animation-data"
 import { modelManager } from "@/lib/model-manager"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
+import {
+  drawLandmarks,
+  drawConnectors,
+  POSE_CONNECTIONS,
+  HAND_CONNECTIONS,
+  FACEMESH_TESSELATION,
+} from "@/lib/pose-utils"
 import { put } from "@vercel/blob"
 
 interface AnimationRecorderProps {
@@ -144,7 +151,6 @@ export function AnimationRecorder({ onAnimationSaved, initialWord = "" }: Animat
           const hasPose = results.poseLandmarks && results.poseLandmarks.length > 0
 
           // Update hand detection status
-          const wasHandDetected = handDetected
           setHandDetected(hasLeftHand || hasRightHand || hasPose)
 
           // If recording, store the landmarks
@@ -221,18 +227,18 @@ export function AnimationRecorder({ onAnimationSaved, initialWord = "" }: Animat
     // Draw pose landmarks
     if (results.poseLandmarks) {
       drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS, { color: "#00FF00", lineWidth: 2 })
-      drawLandmarks(ctx, results.poseLandmarks, { color: "#FF0000", lineWidth: 1, radius: 3 })
+      drawLandmarks(ctx, results.poseLandmarks, { color: "#FF0000", radius: 3 })
     }
 
     // Draw hand landmarks
     if (results.leftHandLandmarks) {
       drawConnectors(ctx, results.leftHandLandmarks, HAND_CONNECTIONS, { color: "#0000FF", lineWidth: 2 })
-      drawLandmarks(ctx, results.leftHandLandmarks, { color: "#00FFFF", lineWidth: 1, radius: 3 })
+      drawLandmarks(ctx, results.leftHandLandmarks, { color: "#00FFFF", radius: 3 })
     }
 
     if (results.rightHandLandmarks) {
       drawConnectors(ctx, results.rightHandLandmarks, HAND_CONNECTIONS, { color: "#FF00FF", lineWidth: 2 })
-      drawLandmarks(ctx, results.rightHandLandmarks, { color: "#FFFF00", lineWidth: 1, radius: 3 })
+      drawLandmarks(ctx, results.rightHandLandmarks, { color: "#FFFF00", radius: 3 })
     }
 
     // Draw face mesh
@@ -313,22 +319,22 @@ export function AnimationRecorder({ onAnimationSaved, initialWord = "" }: Animat
 
     // Create animation data
     if (animationFramesRef.current.length > 0) {
-      const animation = animationUtils.createEmptyAnimation(word)
+      const animation = createEmptyAnimation(word)
 
       // Add all frames
       const updatedAnimation = {
         ...animation,
         frames: animationFramesRef.current,
-        duration: recordingDuration,
         metadata: {
           ...animation.metadata,
           frameCount: animationFramesRef.current.length,
           fps: Math.round(animationFramesRef.current.length / (recordingDuration / 1000)),
+          duration: recordingDuration,
         },
       }
 
       // Compress animation data
-      const compressedAnimation = animationUtils.compressAnimation(updatedAnimation)
+      const compressedAnimation = compressAnimation(updatedAnimation, 15) // Target 15 FPS for smoother playback
 
       setCurrentAnimation(compressedAnimation)
 
@@ -400,18 +406,18 @@ export function AnimationRecorder({ onAnimationSaved, initialWord = "" }: Animat
     // Draw pose landmarks
     if (frame.pose && frame.pose.length > 0) {
       drawConnectors(ctx, frame.pose, POSE_CONNECTIONS, { color: "#00FF00", lineWidth: 2 })
-      drawLandmarks(ctx, frame.pose, { color: "#FF0000", lineWidth: 1, radius: 3 })
+      drawLandmarks(ctx, frame.pose, { color: "#FF0000", radius: 3 })
     }
 
     // Draw hand landmarks
     if (frame.leftHand && frame.leftHand.length > 0) {
       drawConnectors(ctx, frame.leftHand, HAND_CONNECTIONS, { color: "#0000FF", lineWidth: 2 })
-      drawLandmarks(ctx, frame.leftHand, { color: "#00FFFF", lineWidth: 1, radius: 3 })
+      drawLandmarks(ctx, frame.leftHand, { color: "#00FFFF", radius: 3 })
     }
 
     if (frame.rightHand && frame.rightHand.length > 0) {
       drawConnectors(ctx, frame.rightHand, HAND_CONNECTIONS, { color: "#FF00FF", lineWidth: 2 })
-      drawLandmarks(ctx, frame.rightHand, { color: "#FFFF00", lineWidth: 1, radius: 3 })
+      drawLandmarks(ctx, frame.rightHand, { color: "#FFFF00", radius: 3 })
     }
 
     // Draw face mesh (simplified)
@@ -441,15 +447,17 @@ export function AnimationRecorder({ onAnimationSaved, initialWord = "" }: Animat
         type: "application/json",
       })
 
-      const blob = await put(`animations/${currentAnimation.id}.json`, file, {
+      const blob = await put(`animations/${currentAnimation.word.replace(/\s+/g, "_").toLowerCase()}.json`, file, {
         access: "public",
         addRandomSuffix: false,
       })
 
+      console.log("Animation saved to Blob:", blob.url)
+
       // Save to GitHub if configured
       if (modelManager.isGitHubConfigured()) {
         try {
-          await modelManager.saveToGitHub()
+          await modelManager.saveAnimationToGitHub(currentAnimation)
         } catch (error) {
           console.error("GitHub save error:", error)
           // Continue even if GitHub save fails
@@ -535,232 +543,6 @@ export function AnimationRecorder({ onAnimationSaved, initialWord = "" }: Animat
     }
   }, [])
 
-  // Helper functions for drawing landmarks
-  const drawConnectors = (ctx: CanvasRenderingContext2D, landmarks: any[], connections: any[], options: any) => {
-    const canvas = ctx.canvas
-    for (const connection of connections) {
-      const from = landmarks[connection[0]]
-      const to = landmarks[connection[1]]
-      if (from && to) {
-        if (from.visibility && to.visibility && (from.visibility < 0.1 || to.visibility < 0.1)) {
-          continue
-        }
-        ctx.beginPath()
-        ctx.moveTo(from.x * canvas.width, from.y * canvas.height)
-        ctx.lineTo(to.x * canvas.width, to.y * canvas.height)
-        ctx.strokeStyle = options.color
-        ctx.lineWidth = options.lineWidth
-        ctx.stroke()
-      }
-    }
-  }
-
-  const drawLandmarks = (ctx: CanvasRenderingContext2D, landmarks: any[], options: any) => {
-    const canvas = ctx.canvas
-    for (const landmark of landmarks) {
-      if (landmark.visibility && landmark.visibility < 0.1) {
-        continue
-      }
-      ctx.beginPath()
-      ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, options.radius, 0, 2 * Math.PI)
-      ctx.fillStyle = options.color
-      ctx.fill()
-    }
-  }
-
-  // MediaPipe connection constants
-  const POSE_CONNECTIONS = [
-    [0, 1],
-    [1, 2],
-    [2, 3],
-    [3, 7],
-    [0, 4],
-    [4, 5],
-    [5, 6],
-    [6, 8],
-    [9, 10],
-    [11, 12],
-    [11, 13],
-    [13, 15],
-    [12, 14],
-    [14, 16],
-    [0, 11],
-    [0, 12],
-    [11, 23],
-    [12, 24],
-    [23, 24],
-    [23, 25],
-    [24, 26],
-    [25, 27],
-    [26, 28],
-    [27, 29],
-    [28, 30],
-    [29, 31],
-    [30, 32],
-    [11, 13],
-    [12, 14],
-    [13, 15],
-    [14, 16],
-  ]
-
-  const HAND_CONNECTIONS = [
-    [0, 1],
-    [1, 2],
-    [2, 3],
-    [3, 4],
-    [0, 5],
-    [5, 6],
-    [6, 7],
-    [7, 8],
-    [0, 9],
-    [9, 10],
-    [10, 11],
-    [11, 12],
-    [0, 13],
-    [13, 14],
-    [14, 15],
-    [15, 16],
-    [0, 17],
-    [17, 18],
-    [18, 19],
-    [19, 20],
-  ]
-
-  const FACEMESH_TESSELATION = [
-    [127, 34],
-    [34, 139],
-    [139, 127],
-    [11, 0],
-    [0, 37],
-    [37, 11],
-    [232, 231],
-    [231, 120],
-    [120, 232],
-    [72, 37],
-    [37, 39],
-    [39, 72],
-    [128, 121],
-    [121, 47],
-    [47, 128],
-    [232, 121],
-    [121, 128],
-    [128, 232],
-    [104, 69],
-    [69, 67],
-    [67, 104],
-    [175, 171],
-    [171, 148],
-    [148, 175],
-    [118, 50],
-    [50, 101],
-    [101, 118],
-    [73, 39],
-    [39, 40],
-    [40, 73],
-    [9, 151],
-    [151, 108],
-    [108, 9],
-    [48, 115],
-    [115, 131],
-    [131, 48],
-    [194, 204],
-    [204, 211],
-    [211, 194],
-    [74, 40],
-    [40, 185],
-    [185, 74],
-    [80, 42],
-    [42, 183],
-    [183, 80],
-    [40, 92],
-    [92, 186],
-    [186, 40],
-    [230, 229],
-    [229, 118],
-    [118, 230],
-    [202, 212],
-    [212, 214],
-    [214, 202],
-    [83, 18],
-    [18, 17],
-    [17, 83],
-    [76, 61],
-    [61, 146],
-    [146, 76],
-    [160, 29],
-    [29, 30],
-    [30, 160],
-    [56, 157],
-    [157, 173],
-    [173, 56],
-    [106, 204],
-    [204, 194],
-    [194, 106],
-    [135, 214],
-    [214, 192],
-    [192, 135],
-    [203, 165],
-    [165, 98],
-    [98, 203],
-    [21, 71],
-    [71, 68],
-    [68, 21],
-    [51, 45],
-    [45, 4],
-    [4, 51],
-    [144, 24],
-    [24, 23],
-    [23, 144],
-    [77, 146],
-    [146, 91],
-    [91, 77],
-    [205, 50],
-    [50, 187],
-    [187, 205],
-    [201, 200],
-    [200, 18],
-    [18, 201],
-    [91, 181],
-    [181, 85],
-    [85, 91],
-    [78, 95],
-    [95, 88],
-    [88, 78],
-    [244, 246],
-    [246, 163],
-    [163, 244],
-    [133, 155],
-    [155, 98],
-    [98, 133],
-    [117, 132],
-    [132, 196],
-    [196, 117],
-    [5, 4],
-    [4, 1],
-    [1, 5],
-    [169, 168],
-    [168, 138],
-    [138, 169],
-    [45, 44],
-    [44, 51],
-    [51, 45],
-    [200, 199],
-    [199, 175],
-    [175, 200],
-    [159, 170],
-    [170, 104],
-    [104, 159],
-    [113, 114],
-    [114, 135],
-    [135, 113],
-    [10, 9],
-    [9, 3],
-    [3, 10],
-    [172, 163],
-    [163, 246],
-    [246, 172],
-  ]
-
   return (
     <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-purple-50 to-pink-50 dark:from-gray-800 dark:to-gray-900">
       <CardHeader>
@@ -784,6 +566,7 @@ export function AnimationRecorder({ onAnimationSaved, initialWord = "" }: Animat
                     playsInline
                     muted
                     className={`absolute inset-0 w-full h-full object-cover ${isCameraActive ? "opacity-100" : "opacity-0"}`}
+                    crossOrigin="anonymous"
                   />
                   <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
 
@@ -907,7 +690,8 @@ export function AnimationRecorder({ onAnimationSaved, initialWord = "" }: Animat
                         Frames: <span className="font-medium">{currentAnimation.frames.length}</span>
                       </div>
                       <div>
-                        Duration: <span className="font-medium">{(currentAnimation.duration / 1000).toFixed(1)}s</span>
+                        Duration:{" "}
+                        <span className="font-medium">{(currentAnimation.metadata?.duration / 1000).toFixed(1)}s</span>
                       </div>
                     </div>
 

@@ -2,122 +2,97 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import Image from "next/image"
-import { Menu, X, ImageIcon } from "lucide-react"
+import { usePathname } from "next/navigation"
+import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { Menu, X, Home, Mic, Hand, BookOpen, BarChart2, Upload, Settings, Layers, Video } from "lucide-react"
 
 export function Navbar() {
-  const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [isOpen, setIsOpen] = useState(false)
+  const pathname = usePathname()
 
   const toggleMenu = () => {
-    setIsMenuOpen(!isMenuOpen)
+    setIsOpen(!isOpen)
   }
 
+  const closeMenu = () => {
+    setIsOpen(false)
+  }
+
+  const routes = [
+    { name: "Home", path: "/", icon: <Home className="h-5 w-5 mr-2" /> },
+    { name: "Speech to Sign", path: "/speech-to-sign", icon: <Mic className="h-5 w-5 mr-2" /> },
+    { name: "Sign to Speech", path: "/sign-to-speech", icon: <Hand className="h-5 w-5 mr-2" /> },
+    { name: "Sign Phrases", path: "/sign-to-speech-phrases", icon: <BookOpen className="h-5 w-5 mr-2" /> },
+    { name: "Training", path: "/training", icon: <BarChart2 className="h-5 w-5 mr-2" /> },
+    { name: "Sign Library", path: "/sign-image-library", icon: <Layers className="h-5 w-5 mr-2" /> },
+    { name: "Animation Recorder", path: "/animation-recorder", icon: <Video className="h-5 w-5 mr-2" /> },
+    { name: "Upload", path: "/upload", icon: <Upload className="h-5 w-5 mr-2" /> },
+    { name: "Dashboard", path: "/system-dashboard", icon: <Settings className="h-5 w-5 mr-2" /> },
+  ]
+
   return (
-    <nav className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 sticky top-0 z-50">
+    <nav className="bg-white dark:bg-gray-900 shadow-sm border-b">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16">
           <div className="flex">
             <div className="flex-shrink-0 flex items-center">
-              <Link href="/" className="flex items-center">
-                <Image
-                  src="/images/gesture-logo.png"
-                  alt="Vocal2Gestures Logo"
-                  width={32}
-                  height={32}
-                  className="mr-2"
-                />
-                <span className="text-xl font-bold text-gray-900 dark:text-white">Vocal2Gestures</span>
+              <Link href="/" className="flex items-center" onClick={closeMenu}>
+                <img className="h-8 w-auto" src="/images/gesture-logo.png" alt="Vocal2Gestures Logo" />
+                <span className="ml-2 text-xl font-bold text-gray-900 dark:text-white">Vocal2Gestures</span>
               </Link>
             </div>
             <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
-              <Link
-                href="/"
-                className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
-              >
-                Home
-              </Link>
-              <Link
-                href="/speech-to-sign"
-                className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
-              >
-                Speech to Sign
-              </Link>
-              <Link
-                href="/sign-to-speech"
-                className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
-              >
-                Sign to Speech
-              </Link>
-              <Link
-                href="/sign-image-library"
-                className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
-              >
-                <ImageIcon className="h-4 w-4 mr-1" />
-                Sign Library
-              </Link>
-              <Link
-                href="/system-dashboard"
-                className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
-              >
-                System Dashboard
-              </Link>
+              {routes.map((route) => (
+                <Link
+                  key={route.path}
+                  href={route.path}
+                  className={cn(
+                    "inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium",
+                    pathname === route.path
+                      ? "border-purple-500 text-gray-900 dark:text-white"
+                      : "border-transparent text-gray-500 dark:text-gray-300 hover:border-gray-300 dark:hover:border-gray-700 hover:text-gray-700 dark:hover:text-gray-200",
+                  )}
+                >
+                  {route.name}
+                </Link>
+              ))}
             </div>
           </div>
           <div className="-mr-2 flex items-center sm:hidden">
-            <button
+            <Button
+              variant="ghost"
+              className="inline-flex items-center justify-center p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-purple-500"
               onClick={toggleMenu}
-              className="inline-flex items-center justify-center p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 dark:hover:text-white"
-              aria-expanded="false"
             >
               <span className="sr-only">Open main menu</span>
-              {isMenuOpen ? <X className="block h-6 w-6" /> : <Menu className="block h-6 w-6" />}
-            </button>
+              {isOpen ? <X className="block h-6 w-6" /> : <Menu className="block h-6 w-6" />}
+            </Button>
           </div>
         </div>
       </div>
 
-      {isMenuOpen && (
-        <div className="sm:hidden">
-          <div className="pt-2 pb-3 space-y-1">
+      {/* Mobile menu */}
+      <div className={`${isOpen ? "block" : "hidden"} sm:hidden`}>
+        <div className="pt-2 pb-3 space-y-1">
+          {routes.map((route) => (
             <Link
-              href="/"
-              className="text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white block pl-3 pr-4 py-2 border-l-4 border-transparent text-base font-medium"
-              onClick={toggleMenu}
+              key={route.path}
+              href={route.path}
+              className={cn(
+                "flex items-center pl-3 pr-4 py-2 border-l-4 text-base font-medium",
+                pathname === route.path
+                  ? "bg-purple-50 dark:bg-purple-900/20 border-purple-500 text-purple-700 dark:text-purple-300"
+                  : "border-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 hover:border-gray-300 dark:hover:border-gray-700 hover:text-gray-800 dark:hover:text-gray-200",
+              )}
+              onClick={closeMenu}
             >
-              Home
+              {route.icon}
+              {route.name}
             </Link>
-            <Link
-              href="/speech-to-sign"
-              className="text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white block pl-3 pr-4 py-2 border-l-4 border-transparent text-base font-medium"
-              onClick={toggleMenu}
-            >
-              Speech to Sign
-            </Link>
-            <Link
-              href="/sign-to-speech"
-              className="text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white block pl-3 pr-4 py-2 border-l-4 border-transparent text-base font-medium"
-              onClick={toggleMenu}
-            >
-              Sign to Speech
-            </Link>
-            <Link
-              href="/sign-image-library"
-              className="text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white flex items-center pl-3 pr-4 py-2 border-l-4 border-transparent text-base font-medium"
-              onClick={toggleMenu}
-            >
-              <ImageIcon className="h-4 w-4 mr-2" />
-              Sign Library
-            </Link>
-            <Link
-              href="/system-dashboard"
-              className="text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white block pl-3 pr-4 py-2 border-l-4 border-transparent text-base font-medium"
-              onClick={toggleMenu}
-            >
-              System Dashboard
-            </Link>
-          </div>
+          ))}
         </div>
-      )}
+      </div>
     </nav>
   )
 }

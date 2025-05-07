@@ -1,10 +1,15 @@
+import { hasHandsDetected, hasPoseDetected, hasFaceDetected } from "./pose-utils"
+
 export interface HolisticDetectionOptions {
   onResults: (results: any) => void
   onError?: (error: Error) => void
+  onStatusChange?: (status: "initializing" | "ready" | "running" | "error" | "stopped") => void
   modelComplexity?: number
   smoothLandmarks?: boolean
   minDetectionConfidence?: number
   minTrackingConfidence?: number
+  enableFaceGeometry?: boolean
+  refineFaceLandmarks?: boolean
 }
 
 export class HolisticDetection {
@@ -15,6 +20,8 @@ export class HolisticDetection {
   private scriptsLoaded = false
   private loadAttempts = 0
   private maxLoadAttempts = 3
+  private status: "initializing" | "ready" | "running" | "error" | "stopped" = "initializing"
+  private videoElement: HTMLVideoElement | null = null
 
   constructor(options: HolisticDetectionOptions) {
     this.options = {
@@ -22,18 +29,33 @@ export class HolisticDetection {
       smoothLandmarks: true,
       minDetectionConfidence: 0.2,
       minTrackingConfidence: 0.2,
+      enableFaceGeometry: false,
+      refineFaceLandmarks: false,
       ...options,
+    }
+
+    this.updateStatus("initializing")
+  }
+
+  private updateStatus(newStatus: "initializing" | "ready" | "running" | "error" | "stopped") {
+    this.status = newStatus
+    if (this.options.onStatusChange) {
+      this.options.onStatusChange(newStatus)
     }
   }
 
-  public async initialize(): Promise<void> {
+  public async initialize(): Promise<boolean> {
     try {
       // Only initialize in browser environment
-      if (typeof window === "undefined") return
+      if (typeof window === "undefined") {
+        this.updateStatus("error")
+        throw new Error("Cannot initialize MediaPipe in non-browser environment")
+      }
 
       console.log("Starting MediaPipe Holistic initialization...")
+      this.updateStatus("initializing")
 
-      // Load the MediaPipe scripts directly if not already loaded
+      // Load the MediaPipe scripts
       await this.loadMediaPipeScripts()
 
       // Wait for scripts to be fully loaded
@@ -50,27 +72,36 @@ export class HolisticDetection {
 
         console.log("Setting Holistic options...")
         this.holistic.setOptions({
-          modelComplexity: this.options.modelComplexity || 1,
-          smoothLandmarks: this.options.smoothLandmarks !== false,
-          minDetectionConfidence: this.options.minDetectionConfidence || 0.2,
-          minTrackingConfidence: this.options.minTrackingConfidence || 0.2,
-          enableFaceGeometry: false,
-          refineFaceLandmarks: false,
+          modelComplexity: this.options.modelComplexity,
+          smoothLandmarks: this.options.smoothLandmarks,
+          minDetectionConfidence: this.options.minDetectionConfidence,
+          minTrackingConfidence: this.options.minTrackingConfidence,
+          enableFaceGeometry: this.options.enableFaceGeometry,
+          refineFaceLandmarks: this.options.refineFaceLandmarks,
         })
 
         this.holistic.onResults((results: any) => {
           if (this.options.onResults) {
+            // Add detection flags for easier access
+            results.hasHands = hasHandsDetected(results)
+            results.hasPose = hasPoseDetected(results)
+            results.hasFace = hasFaceDetected(results)
+
             this.options.onResults(results)
           }
         })
 
         console.log("MediaPipe Holistic initialized successfully")
-        return
+        this.updateStatus("ready")
+        return true
       } else {
+        this.updateStatus("error")
         throw new Error("MediaPipe Holistic not available after loading scripts")
       }
     } catch (error) {
       console.error("Error initializing MediaPipe Holistic:", error)
+      this.updateStatus("error")
+
       if (this.options.onError) {
         this.options.onError(error as Error)
       }
@@ -82,6 +113,8 @@ export class HolisticDetection {
         await new Promise((resolve) => setTimeout(resolve, 1000)) // Wait 1 second before retry
         return this.initialize()
       }
+
+      return false
     }
   }
 
@@ -166,19 +199,22 @@ export class HolisticDetection {
     })
   }
 
-  public async start(videoElement: HTMLVideoElement): Promise<void> {
+  public async start(videoElement: HTMLVideoElement): Promise<boolean> {
     if (!this.holistic) {
       console.error("Holistic not initialized, cannot start")
-      return
+      this.updateStatus("error")
+      return false
     }
 
     if (this.isRunning) {
       console.log("MediaPipe already running")
-      return
+      return true
     }
 
     try {
       console.log("Starting MediaPipe camera...")
+      this.videoElement = videoElement
+
       if (!window.Camera) {
         throw new Error("MediaPipe Camera not available")
       }
@@ -206,23 +242,50 @@ export class HolisticDetection {
       this.isRunning = true
       await this.camera.start()
       console.log("MediaPipe camera started successfully")
+      this.updateStatus("running")
+      return true
     } catch (error) {
       console.error("Error starting camera:", error)
       this.isRunning = false
+      this.updateStatus("error")
+
       if (this.options.onError) {
         this.options.onError(error as Error)
       }
+      return false
     }
   }
 
   public stop(): void {
     console.log("Stopping MediaPipe detection")
     this.isRunning = false
+    this.updateStatus("stopped")
 
     if (this.camera) {
       this.camera.stop()
       this.camera = null
     }
+  }
+
+  public isInitialized(): boolean {
+    return this.holistic !== null
+  }
+
+  public getStatus(): string {
+    return this.status
+  }
+
+  public async restart(): Promise<boolean> {
+    this.stop()
+
+    // Small delay to ensure clean restart
+    await new Promise((resolve) => setTimeout(resolve, 500))
+
+    if (this.videoElement) {
+      return this.start(this.videoElement)
+    }
+
+    return false
   }
 }
 

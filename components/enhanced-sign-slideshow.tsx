@@ -23,7 +23,13 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import type { AnimationData, AnimationFrame } from "@/lib/animation-data"
-import { POSE_CONNECTIONS, HAND_CONNECTIONS, FACEMESH_TESSELATION } from "@/lib/pose-utils"
+import {
+  drawLandmarks,
+  drawConnectors,
+  POSE_CONNECTIONS,
+  HAND_CONNECTIONS,
+  FACEMESH_TESSELATION,
+} from "@/lib/pose-utils"
 
 interface SlideImage {
   word: string
@@ -40,6 +46,7 @@ interface SlideShowProps {
   interval?: number
   showControls?: boolean
   onComplete?: () => void
+  showAnimations?: boolean
 }
 
 export function EnhancedSignSlideshow({
@@ -48,6 +55,7 @@ export function EnhancedSignSlideshow({
   interval = 2000,
   showControls = true,
   onComplete,
+  showAnimations = true,
 }: SlideShowProps) {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [isPlaying, setIsPlaying] = useState(autoPlay)
@@ -62,7 +70,7 @@ export function EnhancedSignSlideshow({
   const [showMissingWords, setShowMissingWords] = useState(false)
   const [missingWords, setMissingWords] = useState<string[]>([])
   const [loadingProgress, setLoadingProgress] = useState(0)
-  const [showAnimations, setShowAnimations] = useState(true)
+  const [isShowingAnimations, setIsShowingAnimations] = useState(showAnimations)
   const [isAnimating, setIsAnimating] = useState(false)
 
   const timerRef = useRef<NodeJS.Timeout | null>(null)
@@ -112,6 +120,18 @@ export function EnhancedSignSlideshow({
       }
     }
   }, [])
+
+  // Start animation when current slide changes
+  useEffect(() => {
+    if (isShowingAnimations && slideImages.length > 0 && currentIndex < slideImages.length) {
+      const currentSlide = slideImages[currentIndex]
+      if (currentSlide.animation) {
+        startAnimation(currentSlide.animation)
+      } else {
+        stopAnimation()
+      }
+    }
+  }, [currentIndex, isShowingAnimations, slideImages])
 
   const loadImages = async () => {
     setIsLoading(true)
@@ -235,11 +255,6 @@ export function EnhancedSignSlideshow({
         if (isSpeechEnabled) {
           speakWord(slideImages[currentIndex + 1].word)
         }
-
-        // Start animation for the next slide if available
-        if (showAnimations && slideImages[currentIndex + 1].animation) {
-          startAnimation(slideImages[currentIndex + 1].animation!)
-        }
       } else {
         // End of slideshow
         setIsPlaying(false)
@@ -255,9 +270,6 @@ export function EnhancedSignSlideshow({
       clearTimeout(timerRef.current)
       timerRef.current = null
     }
-
-    // Stop any running animation
-    stopAnimation()
   }
 
   const goToNextSlide = () => {
@@ -265,11 +277,6 @@ export function EnhancedSignSlideshow({
       setCurrentIndex(currentIndex + 1)
       if (isSpeechEnabled) {
         speakWord(slideImages[currentIndex + 1].word)
-      }
-
-      // Start animation for the next slide if available
-      if (showAnimations && slideImages[currentIndex + 1].animation) {
-        startAnimation(slideImages[currentIndex + 1].animation!)
       }
     }
   }
@@ -280,11 +287,6 @@ export function EnhancedSignSlideshow({
       if (isSpeechEnabled) {
         speakWord(slideImages[currentIndex - 1].word)
       }
-
-      // Start animation for the previous slide if available
-      if (showAnimations && slideImages[currentIndex - 1].animation) {
-        startAnimation(slideImages[currentIndex - 1].animation!)
-      }
     }
   }
 
@@ -293,22 +295,12 @@ export function EnhancedSignSlideshow({
     if (!isPlaying && isSpeechEnabled) {
       speakWord(slideImages[currentIndex].word)
     }
-
-    // Start animation for current slide if available
-    if (!isPlaying && showAnimations && slideImages[currentIndex].animation) {
-      startAnimation(slideImages[currentIndex].animation!)
-    }
   }
 
   const resetSlideshow = () => {
     setCurrentIndex(0)
     if (isSpeechEnabled) {
       speakWord(slideImages[0].word)
-    }
-
-    // Start animation for first slide if available
-    if (showAnimations && slideImages[0].animation) {
-      startAnimation(slideImages[0].animation!)
     }
   }
 
@@ -356,7 +348,7 @@ export function EnhancedSignSlideshow({
     // Stop any existing animation
     stopAnimation()
 
-    if (!showAnimations || !canvasRef.current || animation.frames.length === 0) return
+    if (!isShowingAnimations || !canvasRef.current || !animation.frames || animation.frames.length === 0) return
 
     setIsAnimating(true)
     animationFrameRef.current = 0
@@ -409,56 +401,23 @@ export function EnhancedSignSlideshow({
     // Draw pose landmarks
     if (frame.pose && frame.pose.length > 0) {
       drawConnectors(ctx, frame.pose, POSE_CONNECTIONS, { color: "#00FF00", lineWidth: 2 })
-      drawLandmarks(ctx, frame.pose, { color: "#FF0000", lineWidth: 1, radius: 3 })
+      drawLandmarks(ctx, frame.pose, { color: "#FF0000", radius: 3 })
     }
 
     // Draw hand landmarks
     if (frame.leftHand && frame.leftHand.length > 0) {
       drawConnectors(ctx, frame.leftHand, HAND_CONNECTIONS, { color: "#0000FF", lineWidth: 2 })
-      drawLandmarks(ctx, frame.leftHand, { color: "#00FFFF", lineWidth: 1, radius: 3 })
+      drawLandmarks(ctx, frame.leftHand, { color: "#00FFFF", radius: 3 })
     }
 
     if (frame.rightHand && frame.rightHand.length > 0) {
       drawConnectors(ctx, frame.rightHand, HAND_CONNECTIONS, { color: "#FF00FF", lineWidth: 2 })
-      drawLandmarks(ctx, frame.rightHand, { color: "#FFFF00", lineWidth: 1, radius: 3 })
+      drawLandmarks(ctx, frame.rightHand, { color: "#FFFF00", radius: 3 })
     }
 
     // Draw face mesh (simplified)
     if (frame.face && frame.face.length > 0) {
       drawConnectors(ctx, frame.face, FACEMESH_TESSELATION, { color: "#C0C0C070", lineWidth: 1 })
-    }
-  }
-
-  // Helper functions for drawing landmarks
-  const drawConnectors = (ctx: CanvasRenderingContext2D, landmarks: any[], connections: any[], options: any) => {
-    const canvas = ctx.canvas
-    for (const connection of connections) {
-      const from = landmarks[connection[0]]
-      const to = landmarks[connection[1]]
-      if (from && to) {
-        if (from.visibility && to.visibility && (from.visibility < 0.1 || to.visibility < 0.1)) {
-          continue
-        }
-        ctx.beginPath()
-        ctx.moveTo(from.x * canvas.width, from.y * canvas.height)
-        ctx.lineTo(to.x * canvas.width, to.y * canvas.height)
-        ctx.strokeStyle = options.color
-        ctx.lineWidth = options.lineWidth
-        ctx.stroke()
-      }
-    }
-  }
-
-  const drawLandmarks = (ctx: CanvasRenderingContext2D, landmarks: any[], options: any) => {
-    const canvas = ctx.canvas
-    for (const landmark of landmarks) {
-      if (landmark.visibility && landmark.visibility < 0.1) {
-        continue
-      }
-      ctx.beginPath()
-      ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, options.radius, 0, 2 * Math.PI)
-      ctx.fillStyle = options.color
-      ctx.fill()
     }
   }
 
@@ -536,7 +495,7 @@ export function EnhancedSignSlideshow({
               </AnimatePresence>
 
               {/* Animation overlay */}
-              {showAnimations && slideImages[currentIndex]?.animation && (
+              {isShowingAnimations && slideImages[currentIndex]?.animation && (
                 <div className="absolute inset-0 pointer-events-none">
                   <canvas
                     ref={canvasRef}
@@ -642,7 +601,7 @@ export function EnhancedSignSlideshow({
                 <Layers className="h-4 w-4" />
                 Show Animations
               </Label>
-              <Switch id="animations-enabled" checked={showAnimations} onCheckedChange={setShowAnimations} />
+              <Switch id="animations-enabled" checked={isShowingAnimations} onCheckedChange={setIsShowingAnimations} />
             </div>
 
             <div className="space-y-2">
