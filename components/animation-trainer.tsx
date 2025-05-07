@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { Camera, CameraOff, Play, Square, Save, Trash2, AlertCircle } from "lucide-react"
+import { Camera, CameraOff, Play, Square, Save, Trash2, AlertCircle, Info } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -13,6 +13,7 @@ import { useToast } from "@/components/ui/use-toast"
 import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
+import { Slider } from "@/components/ui/slider"
 
 export function AnimationTrainer() {
   const [word, setWord] = useState("")
@@ -29,6 +30,12 @@ export function AnimationTrainer() {
   const [handDetected, setHandDetected] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [savedAnimations, setSavedAnimations] = useState<Animation[]>([])
+  const [maxRecordingTime, setMaxRecordingTime] = useState(30) // 30 seconds max by default
+  const [playbackSpeed, setPlaybackSpeed] = useState(1) // 1x speed by default
+  const [recordingStatus, setRecordingStatus] = useState<string>("")
+  const [frameRate, setFrameRate] = useState(0)
+  const [lastFrameTime, setLastFrameTime] = useState(0)
+  const [frameCount, setFrameCount] = useState(0)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -36,6 +43,7 @@ export function AnimationTrainer() {
   const holisticRef = useRef<HolisticDetection | null>(null)
   const signLanguageService = useRef(getSignLanguageDataService())
   const animationFrameRef = useRef<number | null>(null)
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null)
   const { toast } = useToast()
 
   // Initialize MediaPipe and load saved animations
@@ -77,6 +85,10 @@ export function AnimationTrainer() {
 
       if (holisticRef.current) {
         holisticRef.current.stop()
+      }
+
+      if (recordingTimerRef.current) {
+        clearTimeout(recordingTimerRef.current)
       }
     }
   }, [])
@@ -175,7 +187,17 @@ export function AnimationTrainer() {
 
     // If recording, save frame
     if (isRecording) {
-      const timestamp = Date.now() - recordingStartTime
+      const now = Date.now()
+      const timestamp = now - recordingStartTime
+
+      // Calculate frame rate
+      if (lastFrameTime > 0) {
+        const timeDiff = now - lastFrameTime
+        const instantFrameRate = 1000 / timeDiff
+        setFrameRate((prevRate) => prevRate * 0.9 + instantFrameRate * 0.1) // Smooth the frame rate
+      }
+      setLastFrameTime(now)
+      setFrameCount((prev) => prev + 1)
 
       const frame: AnimationFrame = {
         pose: results.poseLandmarks || null,
@@ -187,6 +209,16 @@ export function AnimationTrainer() {
 
       setRecordingFrames((prev) => [...prev, frame])
       setRecordingDuration(timestamp)
+
+      // Update recording status
+      const secondsElapsed = Math.floor(timestamp / 1000)
+      const secondsRemaining = maxRecordingTime - secondsElapsed
+      setRecordingStatus(`Recording: ${secondsElapsed}s / ${maxRecordingTime}s (${secondsRemaining}s remaining)`)
+
+      // Auto-stop recording if max time reached
+      if (timestamp >= maxRecordingTime * 1000) {
+        stopRecording()
+      }
     }
   }
 
@@ -323,23 +355,46 @@ export function AnimationTrainer() {
       })
     }
 
+    // Reset recording state
     setRecordingFrames([])
     setRecordingStartTime(Date.now())
+    setLastFrameTime(0)
+    setFrameCount(0)
+    setFrameRate(0)
     setIsRecording(true)
+
+    // Set a timer to automatically stop recording after maxRecordingTime
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current)
+    }
+
+    recordingTimerRef.current = setTimeout(() => {
+      if (isRecording) {
+        stopRecording()
+      }
+    }, maxRecordingTime * 1000)
 
     toast({
       title: "Recording Started",
-      description: "Perform the sign language gesture clearly.",
+      description: `Recording will automatically stop after ${maxRecordingTime} seconds.`,
     })
   }
 
   const stopRecording = () => {
     setIsRecording(false)
 
+    // Clear the auto-stop timer
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
+
     if (recordingFrames.length > 0) {
+      const avgFrameRate = frameCount / (recordingDuration / 1000)
+
       toast({
         title: "Recording Complete",
-        description: `Captured ${recordingFrames.length} frames over ${(recordingDuration / 1000).toFixed(1)} seconds.`,
+        description: `Captured ${recordingFrames.length} frames over ${(recordingDuration / 1000).toFixed(1)} seconds (${avgFrameRate.toFixed(1)} fps).`,
       })
     }
   }
@@ -359,7 +414,7 @@ export function AnimationTrainer() {
 
     const startTime = Date.now()
     const animate = () => {
-      const elapsed = Date.now() - startTime
+      const elapsed = (Date.now() - startTime) * playbackSpeed
 
       // Find the frame to display based on elapsed time
       let frameIndex = 0
@@ -518,7 +573,11 @@ export function AnimationTrainer() {
     // Draw frame info
     ctx.fillStyle = "white"
     ctx.font = "12px Arial"
-    ctx.fillText(`Frame: ${frameIndex + 1}/${recordingFrames.length}`, 10, playbackCanvasRef.current.height - 5)
+    ctx.fillText(
+      `Frame: ${frameIndex + 1}/${recordingFrames.length} | Time: ${(frame.timestamp / 1000).toFixed(2)}s`,
+      10,
+      playbackCanvasRef.current.height - 5,
+    )
   }
 
   const saveAnimation = async () => {
@@ -533,10 +592,14 @@ export function AnimationTrainer() {
 
     setIsSaving(true)
     try {
+      // Create a more efficient version of the animation by sampling frames
+      // This helps reduce the size of the animation and makes playback smoother
+      const sampledFrames = sampleFrames(recordingFrames, 30) // Target 30 fps
+
       const animation: Animation = {
         id: uuidv4(),
         word: word.trim(),
-        frames: recordingFrames,
+        frames: sampledFrames,
         duration: recordingDuration,
         createdAt: new Date().toISOString(),
       }
@@ -549,7 +612,7 @@ export function AnimationTrainer() {
 
         toast({
           title: "Animation Saved",
-          description: `Animation for "${word}" saved successfully!`,
+          description: `Animation for "${word}" saved successfully with ${sampledFrames.length} frames!`,
         })
 
         // Clear form for next animation
@@ -574,6 +637,31 @@ export function AnimationTrainer() {
     }
   }
 
+  // Sample frames to achieve a target frame rate
+  const sampleFrames = (frames: AnimationFrame[], targetFps: number): AnimationFrame[] => {
+    if (frames.length === 0) return []
+
+    const duration = frames[frames.length - 1].timestamp - frames[0].timestamp
+    const targetFrameCount = Math.min(frames.length, Math.ceil((duration * targetFps) / 1000))
+
+    if (targetFrameCount >= frames.length) return frames
+
+    const sampledFrames: AnimationFrame[] = []
+    const interval = frames.length / targetFrameCount
+
+    for (let i = 0; i < targetFrameCount; i++) {
+      const index = Math.min(Math.floor(i * interval), frames.length - 1)
+      sampledFrames.push(frames[index])
+    }
+
+    // Always include the last frame
+    if (sampledFrames[sampledFrames.length - 1] !== frames[frames.length - 1]) {
+      sampledFrames.push(frames[frames.length - 1])
+    }
+
+    return sampledFrames
+  }
+
   const clearRecording = () => {
     setRecordingFrames([])
     setRecordingDuration(0)
@@ -583,6 +671,17 @@ export function AnimationTrainer() {
       title: "Recording Cleared",
       description: "The current recording has been cleared.",
     })
+  }
+
+  const playAnimation = (animation: Animation) => {
+    setRecordingFrames(animation.frames)
+    setRecordingDuration(animation.duration)
+    setWord(animation.word)
+
+    // Schedule playback to start after state updates
+    setTimeout(() => {
+      playRecording()
+    }, 100)
   }
 
   return (
@@ -617,6 +716,21 @@ export function AnimationTrainer() {
                       onChange={(e) => setWord(e.target.value)}
                       placeholder="Enter the word or phrase for this animation"
                       className="mt-1"
+                    />
+                  </div>
+
+                  <div>
+                    <Label className="flex justify-between">
+                      <span>Maximum Recording Time</span>
+                      <span className="text-sm text-gray-500">{maxRecordingTime} seconds</span>
+                    </Label>
+                    <Slider
+                      value={[maxRecordingTime]}
+                      min={5}
+                      max={60}
+                      step={5}
+                      onValueChange={(value) => setMaxRecordingTime(value[0])}
+                      className="mt-2"
                     />
                   </div>
 
@@ -663,6 +777,18 @@ export function AnimationTrainer() {
                           {handDetected
                             ? "Hand Detected ✓ Ready to record"
                             : "No Hand Detected - Please position your hand in view"}
+                        </div>
+                      )}
+
+                      {isRecording && (
+                        <div className="absolute top-2 left-2 right-2 px-3 py-2 bg-red-500/70 text-white rounded text-sm font-medium text-center">
+                          {recordingStatus}
+                        </div>
+                      )}
+
+                      {frameRate > 0 && isRecording && (
+                        <div className="absolute bottom-2 left-2 px-3 py-1 bg-black/50 text-white rounded text-xs">
+                          {frameRate.toFixed(1)} FPS
                         </div>
                       )}
                     </div>
@@ -712,6 +838,21 @@ export function AnimationTrainer() {
                 </div>
 
                 <div className="space-y-4">
+                  <div>
+                    <Label className="flex justify-between">
+                      <span>Playback Speed</span>
+                      <span className="text-sm text-gray-500">{playbackSpeed}x</span>
+                    </Label>
+                    <Slider
+                      value={[playbackSpeed]}
+                      min={0.25}
+                      max={2}
+                      step={0.25}
+                      onValueChange={(value) => setPlaybackSpeed(value[0])}
+                      className="mt-2"
+                    />
+                  </div>
+
                   <div>
                     <Label>Animation Preview</Label>
                     <div className="relative w-full aspect-video bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden mt-1">
@@ -791,7 +932,8 @@ export function AnimationTrainer() {
                       {savedAnimations.map((animation) => (
                         <div
                           key={animation.id}
-                          className="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-700 rounded-md"
+                          className="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-700 rounded-md hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer"
+                          onClick={() => playAnimation(animation)}
                         >
                           <span className="font-medium">{animation.word}</span>
                           <div className="text-sm text-gray-500">
@@ -805,6 +947,20 @@ export function AnimationTrainer() {
                   </div>
                 </div>
               )}
+
+              <Alert variant="info" className="bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
+                <Info className="h-4 w-4" />
+                <AlertTitle>Tips for Better Animations</AlertTitle>
+                <AlertDescription>
+                  <ul className="list-disc pl-5 space-y-1 mt-2 text-sm">
+                    <li>Position yourself where your hands are clearly visible</li>
+                    <li>Make slow, deliberate movements for better tracking</li>
+                    <li>Ensure good lighting for better hand detection</li>
+                    <li>Record multiple versions of the same sign for variety</li>
+                    <li>Click on a saved animation to preview it</li>
+                  </ul>
+                </AlertDescription>
+              </Alert>
             </>
           )}
         </div>
