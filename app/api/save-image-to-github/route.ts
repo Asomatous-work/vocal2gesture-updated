@@ -1,37 +1,51 @@
-import { NextResponse } from "next/server"
+import { type NextRequest, NextResponse } from "next/server"
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const { word, url } = await request.json()
+    const { word, id, data, fileExtension } = await request.json()
 
-    if (!word || !url) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
+    if (!word || !id || !data) {
+      return NextResponse.json({ error: "Word, ID, and data are required" }, { status: 400 })
     }
 
-    // Get existing images from localStorage
-    let signImages = []
-    if (typeof window !== "undefined") {
-      try {
-        const storedImages = localStorage.getItem("signLanguageImages")
-        if (storedImages) {
-          signImages = JSON.parse(storedImages)
-        }
-      } catch (error) {
-        console.error("Error loading stored images:", error)
-      }
+    // Get GitHub config from environment variables
+    const owner = process.env.GITHUB_OWNER
+    const repo = process.env.GITHUB_REPO
+    const token = process.env.GITHUB_TOKEN
+    const branch = process.env.GITHUB_BRANCH || "main"
+
+    if (!owner || !repo || !token) {
+      return NextResponse.json({ error: "GitHub configuration is incomplete" }, { status: 400 })
     }
 
-    // Add the new image
-    signImages.push({ word, url, id: Date.now().toString() })
+    // Create a filename
+    const filename = `images/${word.replace(/\s+/g, "_")}_${id}.${fileExtension || "png"}`
 
-    // Save back to localStorage
-    if (typeof window !== "undefined") {
-      localStorage.setItem("signLanguageImages", JSON.stringify(signImages))
+    // Create or update file in GitHub
+    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${filename}`, {
+      method: "PUT",
+      headers: {
+        Authorization: `token ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message: `Add sign image for ${word}`,
+        content: data,
+        branch,
+      }),
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(`GitHub API error: ${JSON.stringify(errorData)}`)
     }
 
-    // In a real implementation, we would use the GitHub API to save the image
-    // For now, we'll just simulate success
-    return NextResponse.json({ success: true })
+    const responseData = await response.json()
+
+    return NextResponse.json({
+      url: responseData.content.download_url,
+      success: true,
+    })
   } catch (error) {
     console.error("Error saving image to GitHub:", error)
     return NextResponse.json({ error: "Failed to save image to GitHub" }, { status: 500 })

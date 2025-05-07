@@ -1,15 +1,29 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { Menu, X, Home, Mic, Hand, BookOpen, BarChart2, Upload, Settings, Layers, Video } from "lucide-react"
+import { Menu, X, Home, Mic, Camera, Settings, Moon, Sun } from "lucide-react"
+import { useTheme } from "next-themes"
 
 export function Navbar() {
   const [isOpen, setIsOpen] = useState(false)
+  const [scrolled, setScrolled] = useState(false)
   const pathname = usePathname()
+  const { theme, setTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+    const handleScroll = () => {
+      setScrolled(window.scrollY > 10)
+    }
+    window.addEventListener("scroll", handleScroll)
+    return () => window.removeEventListener("scroll", handleScroll)
+  }, [])
 
   const toggleMenu = () => {
     setIsOpen(!isOpen)
@@ -20,79 +34,138 @@ export function Navbar() {
   }
 
   const routes = [
-    { name: "Home", path: "/", icon: <Home className="h-5 w-5 mr-2" /> },
-    { name: "Speech to Sign", path: "/speech-to-sign", icon: <Mic className="h-5 w-5 mr-2" /> },
-    { name: "Sign to Speech", path: "/sign-to-speech", icon: <Hand className="h-5 w-5 mr-2" /> },
-    { name: "Sign Phrases", path: "/sign-to-speech-phrases", icon: <BookOpen className="h-5 w-5 mr-2" /> },
-    { name: "Training", path: "/training", icon: <BarChart2 className="h-5 w-5 mr-2" /> },
-    { name: "Sign Library", path: "/sign-image-library", icon: <Layers className="h-5 w-5 mr-2" /> },
-    { name: "Animation Recorder", path: "/animation-recorder", icon: <Video className="h-5 w-5 mr-2" /> },
-    { name: "Upload", path: "/upload", icon: <Upload className="h-5 w-5 mr-2" /> },
-    { name: "Dashboard", path: "/system-dashboard", icon: <Settings className="h-5 w-5 mr-2" /> },
+    { name: "Home", path: "/", icon: <Home className="h-5 w-5" /> },
+    { name: "Speak to Sign", path: "/speak-to-sign", icon: <Mic className="h-5 w-5" /> },
+    { name: "Sign to Speak", path: "/sign-to-speak", icon: <Camera className="h-5 w-5" /> },
+    { name: "Settings", path: "/settings", icon: <Settings className="h-5 w-5" /> },
   ]
 
   return (
-    <nav className="bg-white dark:bg-gray-900 shadow-sm border-b">
+    <motion.nav
+      initial={{ y: -100 }}
+      animate={{ y: 0 }}
+      transition={{ duration: 0.5 }}
+      className={cn(
+        "fixed top-0 left-0 right-0 z-50 transition-all duration-300",
+        scrolled ? "bg-white/80 dark:bg-gray-900/80 backdrop-blur-md shadow-md" : "bg-transparent",
+      )}
+    >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between h-16">
-          <div className="flex">
-            <div className="flex-shrink-0 flex items-center">
-              <Link href="/" className="flex items-center" onClick={closeMenu}>
-                <img className="h-8 w-auto" src="/images/gesture-logo.png" alt="Vocal2Gestures Logo" />
-                <span className="ml-2 text-xl font-bold text-gray-900 dark:text-white">Vocal2Gestures</span>
-              </Link>
-            </div>
-            <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
-              {routes.map((route) => (
+        <div className="flex justify-between h-16 items-center">
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5 }}
+            className="flex items-center"
+          >
+            <Link href="/" className="flex items-center" onClick={closeMenu}>
+              <motion.img
+                whileHover={{ rotate: 10 }}
+                transition={{ duration: 0.2 }}
+                className="h-10 w-auto"
+                src="/images/gesture-logo.png"
+                alt="Vocal2Gestures Logo"
+              />
+              <span className="ml-2 text-xl font-bold gradient-text">Vocal2Gestures</span>
+            </Link>
+          </motion.div>
+
+          <div className="hidden md:flex md:items-center md:space-x-6">
+            {routes.map((route, index) => (
+              <motion.div
+                key={route.path}
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: index * 0.1 }}
+              >
                 <Link
-                  key={route.path}
                   href={route.path}
                   className={cn(
-                    "inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium",
+                    "nav-link font-medium text-sm",
                     pathname === route.path
-                      ? "border-purple-500 text-gray-900 dark:text-white"
-                      : "border-transparent text-gray-500 dark:text-gray-300 hover:border-gray-300 dark:hover:border-gray-700 hover:text-gray-700 dark:hover:text-gray-200",
+                      ? "text-purple-600 dark:text-purple-400 active"
+                      : "text-gray-600 dark:text-gray-300 hover:text-purple-600 dark:hover:text-purple-400",
                   )}
                 >
                   {route.name}
                 </Link>
-              ))}
-            </div>
+              </motion.div>
+            ))}
+
+            {mounted && (
+              <motion.button
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.9 }}
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                className="p-2 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200"
+                aria-label="Toggle theme"
+              >
+                {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+              </motion.button>
+            )}
           </div>
-          <div className="-mr-2 flex items-center sm:hidden">
-            <Button
-              variant="ghost"
-              className="inline-flex items-center justify-center p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-purple-500"
-              onClick={toggleMenu}
-            >
-              <span className="sr-only">Open main menu</span>
-              {isOpen ? <X className="block h-6 w-6" /> : <Menu className="block h-6 w-6" />}
+
+          <div className="md:hidden flex items-center">
+            {mounted && (
+              <motion.button
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.9 }}
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                className="p-2 mr-2 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200"
+                aria-label="Toggle theme"
+              >
+                {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+              </motion.button>
+            )}
+
+            <Button variant="ghost" size="icon" onClick={toggleMenu} aria-label="Toggle menu">
+              {isOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
             </Button>
           </div>
         </div>
       </div>
 
       {/* Mobile menu */}
-      <div className={`${isOpen ? "block" : "hidden"} sm:hidden`}>
-        <div className="pt-2 pb-3 space-y-1">
-          {routes.map((route) => (
-            <Link
-              key={route.path}
-              href={route.path}
-              className={cn(
-                "flex items-center pl-3 pr-4 py-2 border-l-4 text-base font-medium",
-                pathname === route.path
-                  ? "bg-purple-50 dark:bg-purple-900/20 border-purple-500 text-purple-700 dark:text-purple-300"
-                  : "border-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 hover:border-gray-300 dark:hover:border-gray-700 hover:text-gray-800 dark:hover:text-gray-200",
-              )}
-              onClick={closeMenu}
-            >
-              {route.icon}
-              {route.name}
-            </Link>
-          ))}
-        </div>
-      </div>
-    </nav>
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.3 }}
+            className="md:hidden glass-card overflow-hidden"
+          >
+            <div className="px-2 pt-2 pb-3 space-y-1">
+              {routes.map((route, index) => (
+                <motion.div
+                  key={route.path}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.3, delay: index * 0.1 }}
+                >
+                  <Link
+                    href={route.path}
+                    className={cn(
+                      "flex items-center px-3 py-2 rounded-md text-base font-medium",
+                      pathname === route.path
+                        ? "gradient-bg text-white"
+                        : "text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800",
+                    )}
+                    onClick={closeMenu}
+                  >
+                    <span className="mr-3">{route.icon}</span>
+                    {route.name}
+                  </Link>
+                </motion.div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.nav>
   )
 }

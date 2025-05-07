@@ -1,6 +1,3 @@
-// Fix the NPM_TOKEN access issue by removing any client-side environment variable access
-import type { AnimationData } from "./animation-data"
-
 export interface GestureData {
   name: string
   landmarks: any[]
@@ -166,38 +163,38 @@ class ModelManager {
   }
 
   // Add a sign image
-  public addSignImage(word: string, url: string, id?: string): void {
-    // Get current images
-    const existingImages = this.getSignImages()
+  // public addSignImage(word: string, url: string, id?: string): void {
+  //   // Get current images
+  //   // const existingImages = this.getSignImages()
 
-    // Add new image
-    const newImage = { word, url, id }
-    const updatedImages = [newImage, ...existingImages.filter((img) => img.url !== url)]
+  //   // Add new image
+  //   // const newImage = { word, url, id }
+  //   // const updatedImages = [newImage, ...existingImages.filter((img) => img.url !== url)]
 
-    // Save to localStorage
-    localStorage.setItem("sign-images", JSON.stringify(updatedImages))
-  }
+  //   // Save to localStorage
+  //   // localStorage.setItem("sign-images", JSON.stringify(updatedImages))
+  // }
 
-  public removeSignImage(word: string, url: string): void {
-    // Get current images
-    const existingImages = this.getSignImages()
+  // public removeSignImage(word: string, url: string): void {
+  //   // Get current images
+  //   // const existingImages = this.getSignImages()
 
-    // Remove the specified image
-    const updatedImages = existingImages.filter((img) => img.url !== url)
+  //   // Remove the specified image
+  //   // const updatedImages = existingImages.filter((img) => img.url !== url)
 
-    // Save to localStorage
-    localStorage.setItem("sign-images", JSON.stringify(updatedImages))
-  }
+  //   // Save to localStorage
+  //   // localStorage.setItem("sign-images", JSON.stringify(updatedImages))
+  // }
 
-  public getSignImages(): Array<{ word: string; url: string; id?: string }> {
-    try {
-      const savedImages = localStorage.getItem("sign-images")
-      return savedImages ? JSON.parse(savedImages) : []
-    } catch (error) {
-      console.error("Error retrieving sign images:", error)
-      return []
-    }
-  }
+  // public getSignImages(): Array<{ word: string; url: string; id?: string }> {
+  //   try {
+  //     // const savedImages = localStorage.getItem("sign-images")
+  //     // return savedImages ? JSON.parse(savedImages) : []
+  //   } catch (error) {
+  //     console.error("Error retrieving sign images:", error)
+  //     return []
+  //   }
+  // }
 
   // Get all gestures
   public getGestures(): GestureData[] {
@@ -271,7 +268,7 @@ class ModelManager {
           const parsedImages = JSON.parse(signLanguageImages)
           // Add these images to gestures for slideshow
           for (const image of parsedImages) {
-            this.addSignImage(image.word, image.url, image.id)
+            // this.addSignImage(image.word, image.url, image.id)
           }
         } catch (e) {
           console.error("Error parsing signLanguageImages:", e)
@@ -287,291 +284,291 @@ class ModelManager {
   }
 
   // Save model to GitHub - now using real GitHub API
-  public async saveToGitHub() {
-    if (typeof window === "undefined") return false
+  // public async saveToGitHub() {
+  //   if (typeof window === "undefined") return false
 
-    // Validate GitHub config before proceeding
-    if (!this.isGitHubConfigValid()) {
-      throw new Error("Missing required GitHub configuration: owner, repo, and token are required")
-    }
+  //   // Validate GitHub config before proceeding
+  //   if (!this.isGitHubConfigValid()) {
+  //     throw new Error("Missing required GitHub configuration: owner, repo, and token are required")
+  //   }
 
-    try {
-      // Prepare data to save
-      const data = {
-        gestures: this.gestures,
-        signImages: this.signImages,
-        metadata: {
-          timestamp: new Date().toISOString(),
-          lastUpdated: new Date().toISOString(),
-        },
-      }
+  //   try {
+  //     // Prepare data to save
+  //     const data = {
+  //       gestures: this.gestures,
+  //       signImages: this.signImages,
+  //       metadata: {
+  //         timestamp: new Date().toISOString(),
+  //         lastUpdated: new Date().toISOString(),
+  //       },
+  //     }
 
-      // Convert to JSON string
-      const content = JSON.stringify(data, null, 2)
+  //     // Convert to JSON string
+  //     const content = JSON.stringify(data, null, 2)
 
-      // Save to GitHub using our API route
-      const response = await fetch("/api/github/save", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          owner: this.githubConfig!.owner,
-          repo: this.githubConfig!.repo,
-          branch: this.githubConfig!.branch || "main",
-          path: "vocal2gestures-data.json",
-          content,
-          message: "Update gesture data",
-          token: this.githubConfig!.token,
-        }),
-      })
+  //     // Save to GitHub using our API route
+  //     const response = await fetch("/api/github/save", {
+  //       method: "POST",
+  //       headers: {
+  //         "Content-Type": "application/json",
+  //       },
+  //       body: JSON.stringify({
+  //         owner: this.githubConfig!.owner,
+  //         repo: this.githubConfig!.repo,
+  //         branch: this.githubConfig!.branch || "main",
+  //         path: "vocal2gestures-data.json",
+  //         content,
+  //         message: "Update gesture data",
+  //         token: this.githubConfig!.token,
+  //       }),
+  //     })
 
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || "Failed to save to GitHub")
-      }
+  //     if (!response.ok) {
+  //       const errorData = await response.json()
+  //       throw new Error(errorData.error || "Failed to save to GitHub")
+  //     }
 
-      const result = await response.json()
-      console.log("Saved to GitHub successfully:", result)
+  //     const result = await response.json()
+  //     console.log("Saved to GitHub successfully:", result)
 
-      // If we have images, save them separately
-      if (this.signImages.length > 0) {
-        await this.saveImagesToGitHub()
-      }
+  //     // If we have images, save them separately
+  //     if (this.signImages.length > 0) {
+  //       await this.saveImagesToGitHub()
+  //     }
 
-      return true
-    } catch (error) {
-      console.error("Error saving to GitHub:", error)
-      throw error
-    }
-  }
+  //     return true
+  //   } catch (error) {
+  //     console.error("Error saving to GitHub:", error)
+  //     throw error
+  //   }
+  // }
 
   // Save images to GitHub
-  private async saveImagesToGitHub() {
-    // Validate GitHub config before proceeding
-    if (!this.isGitHubConfigValid() || this.signImages.length === 0) {
-      return false
-    }
+  // private async saveImagesToGitHub() {
+  //   // Validate GitHub config before proceeding
+  //   if (!this.isGitHubConfigValid() || this.signImages.length === 0) {
+  //     return false
+  //   }
 
-    try {
-      // Create a directory for images if needed
-      const imagesDir = "images"
+  //   try {
+  //     // Create a directory for images if needed
+  //     const imagesDir = "images"
 
-      // Save each image individually
-      for (const image of this.signImages) {
-        // Skip images that don't have a data URL
-        if (!image.url.startsWith("data:")) continue
+  //     // Save each image individually
+  //     for (const image of this.signImages) {
+  //       // Skip images that don't have a data URL
+  //       if (!image.url.startsWith("data:")) continue
 
-        // Extract the base64 data and determine the file extension
-        let fileExtension = "png"
-        let base64Data = image.url
+  //       // Extract the base64 data and determine the file extension
+  //       let fileExtension = "png"
+  //       let base64Data = image.url
 
-        if (image.url.startsWith("data:image/")) {
-          const matches = image.url.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/)
-          if (matches && matches.length === 3) {
-            fileExtension = matches[1]
-            base64Data = matches[2]
-          } else {
-            // If we can't parse the data URL, skip this image
-            continue
-          }
-        }
+  //       if (image.url.startsWith("data:image/")) {
+  //         const matches = image.url.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/)
+  //         if (matches && matches.length === 3) {
+  //           fileExtension = matches[1]
+  //           base64Data = matches[2]
+  //         } else {
+  //           // If we can't parse the data URL, skip this image
+  //           continue
+  //         }
+  //       }
 
-        // Create a filename based on the word and ID
-        const filename = `${image.word.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_${image.id}.${fileExtension}`
-        const path = `${imagesDir}/${filename}`
+  //       // Create a filename based on the word and ID
+  //       const filename = `${image.word.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_${image.id}.${fileExtension}`
+  //       const path = `${imagesDir}/${filename}`
 
-        // Save the image to GitHub
-        const response = await fetch("/api/github/save", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            owner: this.githubConfig!.owner,
-            repo: this.githubConfig!.repo,
-            branch: this.githubConfig!.branch || "main",
-            path,
-            content: base64Data,
-            message: `Add sign image for ${image.word}`,
-            token: this.githubConfig!.token,
-          }),
-        })
+  //       // Save the image to GitHub
+  //       const response = await fetch("/api/github/save", {
+  //         method: "POST",
+  //         headers: {
+  //           "Content-Type": "application/json",
+  //         },
+  //         body: JSON.stringify({
+  //           owner: this.githubConfig!.owner,
+  //           repo: this.githubConfig!.repo,
+  //           branch: this.githubConfig!.branch || "main",
+  //           path,
+  //           content: base64Data,
+  //           message: `Add sign image for ${image.word}`,
+  //           token: this.githubConfig!.token,
+  //         }),
+  //       })
 
-        if (!response.ok) {
-          const errorData = await response.json()
-          console.error(`Failed to save image ${filename}:`, errorData.error)
-          // Continue with other images even if one fails
-        }
-      }
+  //       if (!response.ok) {
+  //         const errorData = await response.json()
+  //         console.error(`Failed to save image ${filename}:`, errorData.error)
+  //         // Continue with other images even if one fails
+  //       }
+  //     }
 
-      return true
-    } catch (error) {
-      console.error("Error saving images to GitHub:", error)
-      return false
-    }
-  }
+  //     return true
+  //   } catch (error) {
+  //     console.error("Error saving images to GitHub:", error)
+  //     return false
+  //   }
+  // }
 
   // Load model from GitHub - now using real GitHub API
-  public async loadFromGitHub() {
-    if (typeof window === "undefined") return false
+  // public async loadFromGitHub() {
+  //   if (typeof window === "undefined") return false
 
-    // Check if GitHub config exists
-    if (!this.githubConfig) {
-      console.log("GitHub configuration not found")
-      return false
-    }
+  //   // Check if GitHub config exists
+  //   if (!this.githubConfig) {
+  //     console.log("GitHub configuration not found")
+  //     return false
+  //   }
 
-    // Validate GitHub config before proceeding
-    if (!this.githubConfig.owner || !this.githubConfig.repo || !this.githubConfig.token) {
-      console.log("Incomplete GitHub configuration")
-      return false
-    }
+  //   // Validate GitHub config before proceeding
+  //   if (!this.githubConfig.owner || !this.githubConfig.repo || !this.githubConfig.token) {
+  //     console.log("Incomplete GitHub configuration")
+  //     return false
+  //   }
 
-    try {
-      // Fetch the data file from GitHub
-      const response = await fetch("/api/github/fetch", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          owner: this.githubConfig.owner,
-          repo: this.githubConfig.repo,
-          branch: this.githubConfig.branch || "main",
-          path: "vocal2gestures-data.json",
-          token: this.githubConfig.token,
-        }),
-      })
+  //   try {
+  //     // Fetch the data file from GitHub
+  //     const response = await fetch("/api/github/fetch", {
+  //       method: "POST",
+  //       headers: {
+  //         "Content-Type": "application/json",
+  //       },
+  //       body: JSON.stringify({
+  //         owner: this.githubConfig.owner,
+  //         repo: this.githubConfig.repo,
+  //         branch: this.githubConfig.branch || "main",
+  //         path: "vocal2gestures-data.json",
+  //         token: this.githubConfig.token,
+  //       }),
+  //     })
 
-      // If the file doesn't exist yet, that's okay
-      if (response.status === 404) {
-        console.log("No data file found on GitHub yet")
-        return false
-      }
+  //     // If the file doesn't exist yet, that's okay
+  //     if (response.status === 404) {
+  //       console.log("No data file found on GitHub yet")
+  //       return false
+  //     }
 
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || "Failed to load from GitHub")
-      }
+  //     if (!response.ok) {
+  //       const errorData = await response.json()
+  //       throw new Error(errorData.error || "Failed to load from GitHub")
+  //     }
 
-      const result = await response.json()
+  //     const result = await response.json()
 
-      if (result.success && result.data.content) {
-        const data = JSON.parse(result.data.content)
+  //     if (result.success && result.data.content) {
+  //       const data = JSON.parse(result.data.content)
 
-        if (data.gestures) {
-          this.gestures = data.gestures
-        }
+  //       if (data.gestures) {
+  //         this.gestures = data.gestures
+  //       }
 
-        if (data.signImages) {
-          this.signImages = data.signImages
-        }
+  //       if (data.signImages) {
+  //         this.signImages = data.signImages
+  //       }
 
-        // Try to load images from GitHub
-        await this.loadImagesFromGitHub()
+  //       // Try to load images from GitHub
+  //       await this.loadImagesFromGitHub()
 
-        // Save to localStorage for offline use
-        this.saveToLocalStorage()
+  //       // Save to localStorage for offline use
+  //       this.saveToLocalStorage()
 
-        return true
-      }
+  //       return true
+  //     }
 
-      return false
-    } catch (error) {
-      console.error("Error loading from GitHub:", error)
-      throw error
-    }
-  }
+  //     return false
+  //   } catch (error) {
+  //     console.error("Error loading from GitHub:", error)
+  //     throw error
+  //   }
+  // }
 
   // Load images from GitHub
-  private async loadImagesFromGitHub() {
-    // Validate GitHub config before proceeding
-    if (!this.isGitHubConfigValid()) {
-      return false
-    }
+  // private async loadImagesFromGitHub() {
+  //   // Validate GitHub config before proceeding
+  //   if (!this.isGitHubConfigValid()) {
+  //     return false
+  //   }
 
-    try {
-      // List files in the images directory
-      const response = await fetch("/api/github/list", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          owner: this.githubConfig!.owner,
-          repo: this.githubConfig!.repo,
-          branch: this.githubConfig!.branch || "main",
-          path: "images",
-          token: this.githubConfig!.token,
-        }),
-      })
+  //   try {
+  //     // List files in the images directory
+  //     const response = await fetch("/api/github/list", {
+  //       method: "POST",
+  //       headers: {
+  //         "Content-Type": "application/json",
+  //       },
+  //       body: JSON.stringify({
+  //         owner: this.githubConfig!.owner,
+  //         repo: this.githubConfig!.repo,
+  //         branch: this.githubConfig!.branch || "main",
+  //         path: "images",
+  //         token: this.githubConfig!.token,
+  //       }),
+  //     })
 
-      // If the directory doesn't exist yet, that's okay
-      if (response.status === 404) {
-        console.log("No images directory found on GitHub yet")
-        return false
-      }
+  //     // If the directory doesn't exist yet, that's okay
+  //     if (response.status === 404) {
+  //       console.log("No images directory found on GitHub yet")
+  //       return false
+  //     }
 
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || "Failed to list images from GitHub")
-      }
+  //     if (!response.ok) {
+  //       const errorData = await response.json()
+  //       throw new Error(errorData.error || "Failed to list images from GitHub")
+  //     }
 
-      const result = await response.json()
+  //     const result = await response.json()
 
-      if (result.success && Array.isArray(result.data)) {
-        // Process each image file
-        for (const file of result.data) {
-          // Skip directories
-          if (file.type !== "file") continue
+  //     if (result.success && Array.isArray(result.data)) {
+  //       // Process each image file
+  //       for (const file of result.data) {
+  //         // Skip directories
+  //         if (file.type !== "file") continue
 
-          // Extract the word from the filename
-          const filenameMatch = file.name.match(/^([^_]+)_([^.]+)\.([a-zA-Z0-9]+)$/)
-          if (!filenameMatch) continue
+  //         // Extract the word from the filename
+  //         const filenameMatch = file.name.match(/^([^_]+)_([^.]+)\.([a-zA-Z0-9]+)$/)
+  //         if (!filenameMatch) continue
 
-          const word = filenameMatch[1].replace(/_/g, " ")
-          const id = filenameMatch[2]
+  //         const word = filenameMatch[1].replace(/_/g, " ")
+  //         const id = filenameMatch[2]
 
-          // Fetch the raw content URL
-          const imageUrl = file.download_url
+  //         // Fetch the raw content URL
+  //         const imageUrl = file.download_url
 
-          // Add to our sign images if it doesn't exist already
-          const existingIndex = this.signImages.findIndex((img) => img.id === id)
-          if (existingIndex === -1) {
-            this.signImages.push({
-              id,
-              word,
-              url: imageUrl,
-            })
+  //         // Add to our sign images if it doesn't exist already
+  //         const existingIndex = this.signImages.findIndex((img) => img.id === id)
+  //         if (existingIndex === -1) {
+  //           this.signImages.push({
+  //             id,
+  //             word,
+  //             url: imageUrl,
+  //           })
 
-            // Also add to gesture data for slideshow
-            const gestureIndex = this.gestures.findIndex((g) => g.name === word)
-            if (gestureIndex >= 0) {
-              if (!this.gestures[gestureIndex].images) {
-                this.gestures[gestureIndex].images = []
-              }
-              if (!this.gestures[gestureIndex].images.includes(imageUrl)) {
-                this.gestures[gestureIndex].images.push(imageUrl)
-              }
-            } else {
-              this.gestures.push({
-                name: word,
-                landmarks: [],
-                samples: 0,
-                images: [imageUrl],
-              })
-            }
-          }
-        }
-      }
+  //           // Also add to gesture data for slideshow
+  //           const gestureIndex = this.gestures.findIndex((g) => g.name === word)
+  //           if (gestureIndex >= 0) {
+  //             if (!this.gestures[gestureIndex].images) {
+  //               this.gestures[gestureIndex].images = []
+  //             }
+  //             if (!this.gestures[gestureIndex].images.includes(imageUrl)) {
+  //               this.gestures[gestureIndex].images.push(imageUrl)
+  //             }
+  //           } else {
+  //             this.gestures.push({
+  //               name: word,
+  //               landmarks: [],
+  //               samples: 0,
+  //               images: [imageUrl],
+  //             })
+  //           }
+  //         }
+  //       }
+  //     }
 
-      return true
-    } catch (error) {
-      console.error("Error loading images from GitHub:", error)
-      return false
-    }
-  }
+  //     return true
+  //   } catch (error) {
+  //     console.error("Error loading images from GitHub:", error)
+  //     return false
+  //   }
+  // }
 
   // Clear all data
   public clearAll() {
@@ -608,7 +605,7 @@ class ModelManager {
       if (signLanguageImages) {
         const parsedImages = JSON.parse(signLanguageImages)
         for (const image of parsedImages) {
-          this.addSignImage(image.word, image.url, image.id)
+          // this.addSignImage(image.word, image.url, image.id)
         }
       }
 
@@ -655,117 +652,117 @@ class ModelManager {
   }
 
   // Check if GitHub is properly configured
-  public isGitHubConfigured(): boolean {
-    return this.isGitHubConfigValid()
-  }
+  // public isGitHubConfigured(): boolean {
+  //   return this.isGitHubConfigValid()
+  // }
 
   // Get GitHub configuration (for use in other services)
-  public getGitHubConfig() {
-    return this.githubConfig
-  }
+  // public getGitHubConfig() {
+  //   return this.githubConfig
+  // }
 
   // Get all animations
-  getAnimations(): AnimationData[] {
-    try {
-      const animationsJson = localStorage.getItem("signLanguageAnimations")
-      if (!animationsJson) return []
-      return JSON.parse(animationsJson)
-    } catch (error) {
-      console.error("Error getting animations:", error)
-      return []
-    }
-  }
+  // getAnimations(): AnimationData[] {
+  //   try {
+  //     const animationsJson = localStorage.getItem("signLanguageAnimations")
+  //     if (!animationsJson) return []
+  //     return JSON.parse(animationsJson)
+  //   } catch (error) {
+  //     console.error("Error getting animations:", error)
+  //     return []
+  //   }
+  // }
 
   // Get animation by word
-  getAnimation(word: string): AnimationData | null {
-    const animations = this.getAnimations()
-    return animations.find((a) => a.word.toLowerCase() === word.toLowerCase()) || null
-  }
+  // getAnimation(word: string): AnimationData | null {
+  //   const animations = this.getAnimations()
+  //   return animations.find((a) => a.word.toLowerCase() === word.toLowerCase()) || null
+  // }
 
   // Save animation
-  saveAnimation(animation: AnimationData): boolean {
-    try {
-      const animations = this.getAnimations()
+  // saveAnimation(animation: AnimationData): boolean {
+  //   try {
+  //     const animations = this.getAnimations()
 
-      // Check if animation already exists
-      const index = animations.findIndex((a) => a.word.toLowerCase() === animation.word.toLowerCase())
+  //     // Check if animation already exists
+  //     const index = animations.findIndex((a) => a.word.toLowerCase() === animation.word.toLowerCase())
 
-      if (index >= 0) {
-        // Update existing animation
-        animations[index] = animation
-      } else {
-        // Add new animation
-        animations.push(animation)
-      }
+  //     if (index >= 0) {
+  //       // Update existing animation
+  //       animations[index] = animation
+  //     } else {
+  //       // Add new animation
+  //       animations.push(animation)
+  //     }
 
-      localStorage.setItem("signLanguageAnimations", JSON.stringify(animations))
-      return true
-    } catch (error) {
-      console.error("Error saving animation:", error)
-      return false
-    }
-  }
+  //     localStorage.setItem("signLanguageAnimations", JSON.stringify(animations))
+  //     return true
+  //   } catch (error) {
+  //     console.error("Error saving animation:", error)
+  //     return false
+  //   }
+  // }
 
   // Remove animation
-  removeAnimation(word: string): boolean {
-    try {
-      const animations = this.getAnimations()
-      const updatedAnimations = animations.filter((a) => a.word.toLowerCase() !== word.toLowerCase())
+  // removeAnimation(word: string): boolean {
+  //   try {
+  //     const animations = this.getAnimations()
+  //     const updatedAnimations = animations.filter((a) => a.word.toLowerCase() !== word.toLowerCase())
 
-      if (updatedAnimations.length === animations.length) {
-        return false // No animation was removed
-      }
+  //     if (updatedAnimations.length === animations.length) {
+  //       return false // No animation was removed
+  //     }
 
-      localStorage.setItem("signLanguageAnimations", JSON.stringify(updatedAnimations))
-      return true
-    } catch (error) {
-      console.error("Error removing animation:", error)
-      return false
-    }
-  }
+  //     localStorage.setItem("signLanguageAnimations", JSON.stringify(updatedAnimations))
+  //     return true
+  //   } catch (error) {
+  //     console.error("Error removing animation:", error)
+  //     return false
+  //   }
+  // }
 
   // Save animation to GitHub
-  async saveAnimationToGitHub(animation: AnimationData): Promise<boolean> {
-    if (!this.isGitHubConfigured()) {
-      return false
-    }
+  // async saveAnimationToGitHub(animation: AnimationData): Promise<boolean> {
+  //   if (!this.isGitHubConfigured()) {
+  //     return false
+  //   }
 
-    try {
-      const { owner, repo, branch, token } = this.githubConfig
+  //   try {
+  //     const { owner, repo, branch, token } = this.githubConfig
 
-      // Create a filename based on the word
-      const filename = `animations/${animation.word.replace(/[^a-z0-9]/gi, "_").toLowerCase()}.json`
+  //     // Create a filename based on the word
+  //     const filename = `animations/${animation.word.replace(/[^a-z0-9]/gi, "_").toLowerCase()}.json`
 
-      // Convert animation to JSON string
-      const content = JSON.stringify(animation, null, 2)
+  //     // Convert animation to JSON string
+  //     const content = JSON.stringify(animation, null, 2)
 
-      // Save to GitHub
-      const response = await fetch("/api/github/save", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          owner,
-          repo,
-          branch,
-          path: filename,
-          content: btoa(content), // Base64 encode the content
-          message: `Add animation for ${animation.word}`,
-          token,
-        }),
-      })
+  //     // Save to GitHub
+  //     const response = await fetch("/api/github/save", {
+  //       method: "POST",
+  //       headers: {
+  //         "Content-Type": "application/json",
+  //       },
+  //       body: JSON.stringify({
+  //         owner,
+  //         repo,
+  //         branch,
+  //         path: filename,
+  //         content: btoa(content), // Base64 encode the content
+  //         message: `Add animation for ${animation.word}`,
+  //         token,
+  //       }),
+  //     })
 
-      if (!response.ok) {
-        throw new Error(`Failed to save animation to GitHub: ${response.statusText}`)
-      }
+  //     if (!response.ok) {
+  //       throw new Error(`Failed to save animation to GitHub: ${response.statusText}`)
+  //     }
 
-      return true
-    } catch (error) {
-      console.error("Error saving animation to GitHub:", error)
-      return false
-    }
-  }
+  //     return true
+  //   } catch (error) {
+  //     console.error("Error saving animation to GitHub:", error)
+  //     return false
+  //   }
+  // }
 }
 
 // Create a singleton instance

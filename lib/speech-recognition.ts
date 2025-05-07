@@ -3,60 +3,41 @@ export interface SpeechRecognitionResult {
   isFinal: boolean
 }
 
-export interface SpeechRecognitionOptions {
-  language?: string
-  continuous?: boolean
-  interimResults?: boolean
-  onResult?: (result: SpeechRecognitionResult) => void
-  onError?: (error: any) => void
-  onEnd?: () => void
-}
-
 export class SpeechRecognitionService {
-  private recognition: any
+  private recognition: SpeechRecognition | null = null
   private isListening = false
-  private options: SpeechRecognitionOptions
+  private onResultCallback: ((result: SpeechRecognitionResult) => void) | null = null
+  private onEndCallback: (() => void) | null = null
+  private onErrorCallback: ((error: any) => void) | null = null
 
-  constructor(options: SpeechRecognitionOptions = {}) {
-    this.options = {
-      language: "en-US",
-      continuous: true,
-      interimResults: true,
-      ...options,
-    }
+  constructor() {
+    if (typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window)) {
+      const SpeechRecognition: SpeechRecognitionStatic =
+        window.SpeechRecognition || (window as any).webkitSpeechRecognition
+      this.recognition = new SpeechRecognition()
+      this.recognition.continuous = true
+      this.recognition.interimResults = true
+      this.recognition.lang = "en-US"
 
-    if (typeof window !== "undefined") {
-      // @ts-ignore
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-
-      if (SpeechRecognition) {
-        this.recognition = new SpeechRecognition()
-        this.recognition.lang = this.options.language
-        this.recognition.continuous = this.options.continuous
-        this.recognition.interimResults = this.options.interimResults
-
-        this.recognition.onresult = (event: any) => {
-          const last = event.results.length - 1
-          const transcript = event.results[last][0].transcript
-          const isFinal = event.results[last].isFinal
-
-          if (this.options.onResult) {
-            this.options.onResult({ transcript, isFinal })
-          }
+      this.recognition.onresult = (event) => {
+        if (this.onResultCallback) {
+          const lastResult = event.results[event.results.length - 1]
+          const transcript = lastResult[0].transcript
+          const isFinal = lastResult.isFinal
+          this.onResultCallback({ transcript, isFinal })
         }
+      }
 
-        this.recognition.onerror = (event: any) => {
-          if (this.options.onError) {
-            this.options.onError(event)
-          }
+      this.recognition.onend = () => {
+        this.isListening = false
+        if (this.onEndCallback) {
+          this.onEndCallback()
         }
+      }
 
-        this.recognition.onend = () => {
-          if (this.isListening) {
-            this.recognition.start()
-          } else if (this.options.onEnd) {
-            this.options.onEnd()
-          }
+      this.recognition.onerror = (event) => {
+        if (this.onErrorCallback) {
+          this.onErrorCallback(event)
         }
       }
     }
@@ -64,31 +45,57 @@ export class SpeechRecognitionService {
 
   public start(): boolean {
     if (!this.recognition) {
+      console.error("Speech recognition not supported in this browser")
       return false
     }
 
-    try {
-      this.recognition.start()
-      this.isListening = true
-      return true
-    } catch (error) {
-      console.error("Speech recognition error:", error)
-      return false
+    if (!this.isListening) {
+      try {
+        this.recognition.start()
+        this.isListening = true
+        return true
+      } catch (error) {
+        console.error("Error starting speech recognition:", error)
+        return false
+      }
     }
+    return true
   }
 
   public stop(): void {
     if (this.recognition && this.isListening) {
-      this.isListening = false
       this.recognition.stop()
+      this.isListening = false
     }
   }
 
   public isSupported(): boolean {
-    return (
-      typeof window !== "undefined" &&
-      // @ts-ignore
-      (window.SpeechRecognition || window.webkitSpeechRecognition)
-    )
+    return !!this.recognition
   }
+
+  public onResult(callback: (result: SpeechRecognitionResult) => void): void {
+    this.onResultCallback = callback
+  }
+
+  public onEnd(callback: () => void): void {
+    this.onEndCallback = callback
+  }
+
+  public onError(callback: (error: any) => void): void {
+    this.onErrorCallback = callback
+  }
+
+  public isActive(): boolean {
+    return this.isListening
+  }
+}
+
+// Create a singleton instance
+let speechRecognitionService: SpeechRecognitionService | null = null
+
+export function getSpeechRecognitionService(): SpeechRecognitionService {
+  if (!speechRecognitionService && typeof window !== "undefined") {
+    speechRecognitionService = new SpeechRecognitionService()
+  }
+  return speechRecognitionService as SpeechRecognitionService
 }

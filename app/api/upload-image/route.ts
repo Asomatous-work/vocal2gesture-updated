@@ -1,50 +1,30 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { uploadImage } from "@/lib/image-storage-service"
+import { put } from "@vercel/blob"
 
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData()
     const file = formData.get("file") as File
     const word = formData.get("word") as string
-    const id = formData.get("id") as string
-    const category = formData.get("category") as string
-    const tagsString = formData.get("tags") as string
-    const tags = tagsString ? JSON.parse(tagsString) : undefined
 
     if (!file || !word) {
-      return NextResponse.json({ success: false, error: "File and word are required" }, { status: 400 })
+      return NextResponse.json({ error: "File and word are required" }, { status: 400 })
     }
 
-    const result = await uploadImage(file, {
-      word,
-      id,
-      category,
-      tags,
+    // Generate a unique filename
+    const filename = `${word.replace(/\s+/g, "_")}_${Date.now()}.${file.name.split(".").pop()}`
+
+    // Upload to Vercel Blob
+    const blob = await put(filename, file, {
+      access: "public",
     })
 
-    if (result.success) {
-      return NextResponse.json({
-        success: true,
-        url: result.url,
-        githubUrl: result.githubUrl,
-      })
-    } else {
-      return NextResponse.json({ success: false, error: result.error }, { status: 500 })
-    }
+    return NextResponse.json({
+      url: blob.url,
+      success: true,
+    })
   } catch (error) {
-    console.error("Error in upload-image API route:", error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error occurred",
-      },
-      { status: 500 },
-    )
+    console.error("Error uploading image:", error)
+    return NextResponse.json({ error: "Failed to upload image" }, { status: 500 })
   }
-}
-
-export const config = {
-  api: {
-    bodyParser: false,
-  },
 }
