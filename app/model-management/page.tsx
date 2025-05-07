@@ -7,15 +7,17 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/components/ui/use-toast"
-import { Github, Save, Trash2, RefreshCw, Upload, Download } from "lucide-react"
+import { Github, Save, Trash2, RefreshCw, Upload, Download, AlertTriangle } from "lucide-react"
 import { modelManager } from "@/lib/model-manager"
 import Image from "next/image"
 import { Skeleton } from "@/components/ui/skeleton-loader"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 export default function ModelManagementPage() {
   const [owner, setOwner] = useState("")
   const [repo, setRepo] = useState("")
   const [branch, setBranch] = useState("main")
+  const [token, setToken] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -23,6 +25,7 @@ export default function ModelManagementPage() {
   const [signImages, setSignImages] = useState<{ word: string; url: string }[]>([])
   // Add a loading state for model management operations
   const [isInitializing, setIsInitializing] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   const { toast } = useToast()
 
@@ -31,14 +34,16 @@ export default function ModelManagementPage() {
   useEffect(() => {
     try {
       setIsInitializing(true)
+      setError(null)
 
       // Load GitHub settings
       const settings = localStorage.getItem("githubSettings")
       if (settings) {
-        const { owner, repo, branch } = JSON.parse(settings)
-        setOwner(owner || "")
-        setRepo(repo || "")
-        setBranch(branch || "main")
+        const parsedSettings = JSON.parse(settings)
+        setOwner(parsedSettings.owner || "")
+        setRepo(parsedSettings.repo || "")
+        setBranch(parsedSettings.branch || "main")
+        setToken(parsedSettings.token || "")
       }
 
       // Load models
@@ -55,13 +60,14 @@ export default function ModelManagementPage() {
       setSignImages(images)
     } catch (error) {
       console.error("Error loading settings:", error)
+      setError("Failed to load settings and models. Please try refreshing the page.")
     } finally {
       setIsInitializing(false)
     }
   }, [])
 
   // Save GitHub settings
-  const saveSettings = () => {
+  const saveSettings = async () => {
     if (!owner || !repo) {
       toast({
         title: "Missing Information",
@@ -71,57 +77,71 @@ export default function ModelManagementPage() {
       return
     }
 
-    try {
-      // Save to localStorage
-      const settings = { owner, repo, branch: branch || "main" }
-      localStorage.setItem("githubSettings", JSON.stringify(settings))
-
-      // Initialize GitHub integration
-      modelManager.initGitHub(settings)
-
+    if (!token) {
       toast({
-        title: "Settings Saved",
-        description: "GitHub settings have been saved successfully.",
-      })
-    } catch (error) {
-      console.error("Error saving settings:", error)
-      toast({
-        title: "Save Error",
-        description: "There was an error saving your settings.",
-        variant: "destructive",
-      })
-    }
-  }
-
-  // Save models to GitHub
-  const saveToGitHub = async () => {
-    if (!owner || !repo) {
-      toast({
-        title: "Missing GitHub Settings",
-        description: "Please configure your GitHub settings first.",
+        title: "Missing Token",
+        description: "A GitHub token is required for API access.",
         variant: "destructive",
       })
       return
     }
 
+    setError(null)
     setIsSaving(true)
 
     try {
-      const success = await modelManager.saveToGitHub()
+      // Save to localStorage and initialize GitHub integration
+      const settings = { owner, repo, branch: branch || "main", token }
+      await modelManager.initGitHub(settings)
 
-      if (success) {
-        toast({
-          title: "Save Successful",
-          description: "Your models have been saved to GitHub.",
-        })
-      } else {
-        throw new Error("Failed to save to GitHub")
-      }
-    } catch (error) {
-      console.error("GitHub save error:", error)
+      toast({
+        title: "Settings Saved",
+        description: "GitHub settings have been saved successfully.",
+      })
+    } catch (error: any) {
+      console.error("Error saving settings:", error)
+      setError(error.message || "Failed to save GitHub settings")
       toast({
         title: "Save Error",
-        description: "There was an error saving to GitHub.",
+        description: error.message || "There was an error saving your settings.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  // Save models to GitHub
+  const saveToGitHub = async () => {
+    if (!owner || !repo || !token) {
+      toast({
+        title: "Missing GitHub Settings",
+        description: "Please configure your GitHub settings with owner, repository name, and token.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setError(null)
+    setIsSaving(true)
+
+    try {
+      // Make sure GitHub settings are up to date
+      await modelManager.initGitHub({ owner, repo, branch: branch || "main", token })
+
+      // Save to GitHub
+      await modelManager.saveToGitHub()
+
+      toast({
+        title: "Save Successful",
+        description: "Your models have been saved to GitHub.",
+      })
+    } catch (error: any) {
+      console.error("GitHub save error:", error)
+      setError(error.message || "Failed to save to GitHub")
+      toast({
+        title: "Save Error",
+        description: error.message || "There was an error saving to GitHub.",
         variant: "destructive",
       })
     } finally {
@@ -131,45 +151,47 @@ export default function ModelManagementPage() {
 
   // Load models from GitHub
   const loadFromGitHub = async () => {
-    if (!owner || !repo) {
+    if (!owner || !repo || !token) {
       toast({
         title: "Missing GitHub Settings",
-        description: "Please configure your GitHub settings first.",
+        description: "Please configure your GitHub settings with owner, repository name, and token.",
         variant: "destructive",
       })
       return
     }
 
+    setError(null)
     setIsLoading(true)
 
     try {
-      const success = await modelManager.loadFromGitHub()
+      // Make sure GitHub settings are up to date
+      await modelManager.initGitHub({ owner, repo, branch: branch || "main", token })
 
-      if (success) {
-        // Refresh the UI with loaded data
-        const gestureModels = modelManager.getGestures()
-        setGestures(
-          gestureModels.map((g) => ({
-            name: g.name,
-            samples: g.samples,
-          })),
-        )
+      // Load from GitHub
+      await modelManager.loadFromGitHub()
 
-        const images = modelManager.getSignImages()
-        setSignImages(images)
+      // Refresh the UI with loaded data
+      const gestureModels = modelManager.getGestures()
+      setGestures(
+        gestureModels.map((g) => ({
+          name: g.name,
+          samples: g.samples,
+        })),
+      )
 
-        toast({
-          title: "Load Successful",
-          description: "Your models have been loaded from GitHub.",
-        })
-      } else {
-        throw new Error("Failed to load from GitHub")
-      }
-    } catch (error) {
+      const images = modelManager.getSignImages()
+      setSignImages(images)
+
+      toast({
+        title: "Load Successful",
+        description: "Your models have been loaded from GitHub.",
+      })
+    } catch (error: any) {
       console.error("GitHub load error:", error)
+      setError(error.message || "Failed to load from GitHub")
       toast({
         title: "Load Error",
-        description: "There was an error loading from GitHub.",
+        description: error.message || "There was an error loading from GitHub.",
         variant: "destructive",
       })
     } finally {
@@ -199,8 +221,9 @@ export default function ModelManagementPage() {
       } else {
         throw new Error("Failed to delete models")
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Delete error:", error)
+      setError(error.message || "Failed to delete models")
       toast({
         title: "Delete Error",
         description: "There was an error deleting your models.",
@@ -227,6 +250,14 @@ export default function ModelManagementPage() {
           Manage your gesture models and sign language images with GitHub integration
         </p>
       </motion.div>
+
+      {error && (
+        <Alert variant="destructive" className="mb-6">
+          <AlertTriangle className="h-4 w-4 mr-2" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Add loading state for when the page is initializing */}
       {isInitializing ? (
@@ -275,9 +306,31 @@ export default function ModelManagementPage() {
                     <Input id="branch" placeholder="main" value={branch} onChange={(e) => setBranch(e.target.value)} />
                   </div>
 
-                  <Button onClick={saveSettings} className="w-full">
-                    <Save className="mr-2 h-4 w-4" />
-                    Save Settings
+                  <div className="grid grid-cols-1 gap-2">
+                    <Label htmlFor="token">GitHub Token (Required)</Label>
+                    <Input
+                      id="token"
+                      type="password"
+                      placeholder="GitHub personal access token"
+                      value={token}
+                      onChange={(e) => setToken(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Create a token with 'repo' scope at{" "}
+                      <a
+                        href="https://github.com/settings/tokens/new"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-500 hover:underline"
+                      >
+                        github.com/settings/tokens/new
+                      </a>
+                    </p>
+                  </div>
+
+                  <Button onClick={saveSettings} className="w-full" disabled={isSaving}>
+                    {isSaving ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                    {isSaving ? "Saving..." : "Save Settings"}
                   </Button>
 
                   <div className="grid grid-cols-2 gap-4 mt-4">

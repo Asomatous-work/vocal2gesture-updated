@@ -32,8 +32,10 @@ export class HolisticDetection {
         this.holistic.setOptions({
           modelComplexity: 1,
           smoothLandmarks: true,
-          minDetectionConfidence: 0.5,
-          minTrackingConfidence: 0.5,
+          minDetectionConfidence: 0.3, // Lower this from 0.5 to 0.3 for better detection
+          minTrackingConfidence: 0.3, // Lower this from 0.5 to 0.3 for better tracking
+          enableFaceGeometry: false, // Disable face geometry to focus on hands
+          refineFaceLandmarks: false, // Disable face refinement to focus on hands
         })
 
         this.holistic.onResults((results: any) => {

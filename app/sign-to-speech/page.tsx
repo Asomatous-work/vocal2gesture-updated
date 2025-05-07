@@ -46,69 +46,88 @@ export default function SignToSpeechPage() {
   const { toast } = useToast()
 
   // Initialize models and load from GitHub if available
-  useEffect(() => {
-    const initModels = async () => {
-      setIsLoading(true)
-      try {
-        // Try to load models from GitHub first
-        const loaded = await modelManager.loadFromGitHub()
-        if (loaded) {
-          toast({
-            title: "Models Loaded",
-            description: "Successfully loaded models from GitHub.",
-          })
-        } else {
-          // Fall back to local storage
-          const localLoaded = await modelManager.loadFromLocalStorage()
-          if (localLoaded) {
-            toast({
-              title: "Models Loaded",
-              description: "Successfully loaded models from local storage.",
-            })
-          } else {
-            toast({
-              title: "No Models Found",
-              description: "Please train some gestures first.",
-              variant: "destructive",
-            })
-          }
-        }
+  const initModels = async () => {
+    setIsLoading(true)
+    try {
+      // First check if we have models in local storage
+      const localLoaded = await modelManager.loadFromLocalStorage()
 
-        // Initialize LSTM model if available
+      // Only try GitHub if local storage doesn't have models
+      if (!localLoaded) {
         try {
-          const savedModels = JSON.parse(localStorage.getItem("savedLSTMModels") || "[]")
-          if (savedModels.length > 0) {
-            const latestModel = savedModels[savedModels.length - 1]
-
-            // Create LSTM model instance
-            lstmModelRef.current = new LSTMGestureModel({
-              sequenceLength: 30,
-              numFeatures: 63,
-              numClasses: 0, // Will be set during load
-              hiddenUnits: 64,
-              learningRate: 0.001,
-            })
-
-            const loaded = await lstmModelRef.current.loadFromLocalStorage(latestModel.id)
-            if (loaded) {
-              console.log("LSTM model loaded successfully")
+          // Check if GitHub is configured before attempting to load
+          const githubSettings = localStorage.getItem("githubSettings")
+          if (githubSettings) {
+            const config = JSON.parse(githubSettings)
+            if (config.owner && config.repo && config.token) {
+              // GitHub is properly configured, try to load
+              const loaded = await modelManager.loadFromGitHub()
+              if (loaded) {
+                toast({
+                  title: "Models Loaded",
+                  description: "Successfully loaded models from GitHub.",
+                })
+              }
+            } else {
+              console.log("GitHub not fully configured, skipping GitHub load")
             }
           }
-        } catch (error) {
-          console.error("Error loading LSTM model:", error)
+        } catch (githubError) {
+          console.error("Error loading from GitHub:", githubError)
+          // Continue with local storage if GitHub fails
+        }
+      } else {
+        toast({
+          title: "Models Loaded",
+          description: "Successfully loaded models from local storage.",
+        })
+      }
+
+      // Initialize LSTM model if available
+      try {
+        const savedModels = JSON.parse(localStorage.getItem("savedLSTMModels") || "[]")
+        if (savedModels.length > 0) {
+          const latestModel = savedModels[savedModels.length - 1]
+
+          // Create LSTM model instance
+          lstmModelRef.current = new LSTMGestureModel({
+            sequenceLength: 30,
+            numFeatures: 63,
+            numClasses: 0, // Will be set during load
+            hiddenUnits: 64,
+            learningRate: 0.001,
+          })
+
+          const loaded = await lstmModelRef.current.loadFromLocalStorage(latestModel.id)
+          if (loaded) {
+            console.log("LSTM model loaded successfully")
+          }
         }
       } catch (error) {
-        console.error("Error initializing models:", error)
+        console.error("Error loading LSTM model:", error)
+      }
+
+      // Check if we have any models loaded
+      if (modelManager.getGestures().length === 0) {
         toast({
-          title: "Model Loading Error",
-          description: "There was an error loading the gesture models.",
+          title: "No Models Found",
+          description: "Please train some gestures first or configure GitHub integration.",
           variant: "destructive",
         })
-      } finally {
-        setIsLoading(false)
       }
+    } catch (error) {
+      console.error("Error initializing models:", error)
+      toast({
+        title: "Model Loading Error",
+        description: "There was an error loading the gesture models. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
     }
+  }
 
+  useEffect(() => {
     initModels()
 
     return () => {

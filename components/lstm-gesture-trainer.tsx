@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { Slider } from "@/components/ui/slider"
 import { useToast } from "@/components/ui/use-toast"
-import { Camera, CameraOff, Trash, RefreshCw, Terminal, Brain, Github } from "lucide-react"
+import { Camera, CameraOff, Trash, RefreshCw, Terminal, Brain, Github, BookOpen, Layers } from "lucide-react"
 import { HolisticDetection } from "@/lib/mediapipe-holistic"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { TrainingVisualization } from "./training-visualization"
@@ -19,6 +19,18 @@ import { modelManager } from "@/lib/model-manager"
 import * as tf from "@tensorflow/tfjs"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { GestureCategorySelector } from "./gesture-category-selector"
+import { GestureReferenceImages } from "./gesture-reference-images"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { GitHubIntegrationPanel } from "./github-integration-panel"
 
 interface GestureData {
   name: string
@@ -60,6 +72,12 @@ export function LSTMGestureTrainer() {
   const [debugInfo, setDebugInfo] = useState<string>("")
   const [isInitializing, setIsInitializing] = useState(false)
   const [handDetected, setHandDetected] = useState(false)
+  const [activeTab, setActiveTab] = useState("camera")
+  const [showReferenceDialog, setShowReferenceDialog] = useState(false)
+
+  const [githubToken, setGithubToken] = useState<string>("")
+  const [isSavingToken, setIsSavingToken] = useState(false)
+  const [githubTokenSaved, setGithubTokenSaved] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -154,11 +172,21 @@ export function LSTMGestureTrainer() {
             onResults: (results) => {
               drawResults(results)
 
-              // Check if hands are detected
+              // Check if hands are detected - use a more lenient detection approach
               const hasLeftHand = results.leftHandLandmarks && results.leftHandLandmarks.length > 0
               const hasRightHand = results.rightHandLandmarks && results.rightHandLandmarks.length > 0
 
+              // Update hand detection status
+              const wasHandDetected = handDetected
               setHandDetected(hasLeftHand || hasRightHand)
+
+              // Log when hand detection status changes
+              if (wasHandDetected !== (hasLeftHand || hasRightHand)) {
+                addLog(
+                  hasLeftHand || hasRightHand ? "info" : "warning",
+                  hasLeftHand || hasRightHand ? "Hand detected" : "Hand lost from view",
+                )
+              }
 
               // If collecting samples, store the landmarks
               if (isCollecting && gestureName) {
@@ -365,15 +393,16 @@ export function LSTMGestureTrainer() {
       return
     }
 
+    // Force collection even if hand is not detected, but warn the user
     if (!handDetected) {
       toast({
-        title: "No Hand Detected",
-        description: "Please position your hand in the camera view.",
-        variant: "destructive",
+        title: "Warning: No Hand Detected",
+        description: "No hand is currently detected. Try repositioning your hand or proceed anyway.",
+        variant: "warning",
       })
-
-      addLog("warning", "Cannot collect sample: No hand detected")
-      return
+      addLog("warning", "Collecting sample with no hand detected - results may be poor")
+    } else {
+      addLog("info", "Hand detected - starting collection")
     }
 
     // Reset collection state
@@ -580,6 +609,12 @@ export function LSTMGestureTrainer() {
       default:
         return ""
     }
+  }
+
+  // Handle gesture selection from category selector
+  const handleGestureSelect = (name: string) => {
+    setGestureName(name)
+    setActiveTab("camera")
   }
 
   // Save the model to localStorage
@@ -794,6 +829,69 @@ export function LSTMGestureTrainer() {
     }
   }
 
+  // Save GitHub token directly
+  const saveGitHubToken = async () => {
+    if (!githubToken) {
+      toast({
+        title: "Missing Token",
+        description: "Please enter a GitHub personal access token.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setIsSavingToken(true)
+    addLog("info", "Saving GitHub token...")
+
+    try {
+      // Validate the token with GitHub API
+      const response = await fetch("/api/github-config", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          token: githubToken,
+        }),
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || "Failed to validate GitHub token")
+      }
+
+      // Save to model manager
+      modelManager.initGitHub({
+        owner: "Asomatous-work", // Default owner
+        repo: "vocal2gesture-updated", // Default repo
+        branch: "main", // Default branch
+        token: githubToken,
+      })
+
+      setGithubTokenSaved(true)
+      toast({
+        title: "GitHub Token Saved",
+        description: "Your GitHub token has been saved successfully.",
+      })
+      addLog("success", "GitHub token saved successfully")
+
+      // Clear the token field for security
+      setTimeout(() => {
+        setGithubToken("")
+      }, 2000)
+    } catch (error) {
+      console.error("Error saving GitHub token:", error)
+      toast({
+        title: "Token Error",
+        description: error.message || "There was an error saving your GitHub token.",
+        variant: "destructive",
+      })
+      addLog("error", `Failed to save GitHub token: ${error}`)
+    } finally {
+      setIsSavingToken(false)
+    }
+  }
+
   // Save the trained model to GitHub - using the existing GitHub config
   const saveModelToGitHub = async () => {
     if (!lstmModelRef.current || !isModelLoaded) {
@@ -868,131 +966,198 @@ export function LSTMGestureTrainer() {
         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5 }}>
           <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-purple-50 to-pink-50 dark:from-gray-800 dark:to-gray-900">
             <CardHeader>
-              <div className="flex items-center">
-                <Image src="/images/gesture-logo.png" alt="Gesture Detection" width={30} height={30} className="mr-2" />
-                <div>
-                  <CardTitle>Gesture Detection</CardTitle>
-                  <CardDescription>Position your hands in the camera view to detect gestures</CardDescription>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <Image
+                    src="/images/gesture-logo.png"
+                    alt="Gesture Detection"
+                    width={30}
+                    height={30}
+                    className="mr-2"
+                  />
+                  <div>
+                    <CardTitle>Gesture Detection</CardTitle>
+                    <CardDescription>Position your hands in the camera view to detect gestures</CardDescription>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setActiveTab("categories")}>
+                    <Layers className="h-4 w-4 mr-1" />
+                    Categories
+                  </Button>
+                  <DialogTrigger asChild onClick={() => setShowReferenceDialog(true)}>
+                    <Button variant="outline" size="sm">
+                      <BookOpen className="h-4 w-4 mr-1" />
+                      References
+                    </Button>
+                  </DialogTrigger>
                 </div>
               </div>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-col items-center">
-                <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden mb-6">
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    style={{ objectFit: "cover" }}
-                    className={`absolute inset-0 w-full h-full ${isCameraActive ? "opacity-100" : "opacity-0"}`}
-                  />
-                  <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
-                  {isCameraActive && (
-                    <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                      {isCollecting
-                        ? `Collecting: ${sampleFrameCount}/${totalSampleFrames}`
-                        : handDetected
-                          ? "Hand Detected ✓"
-                          : "No Hand Detected"}
-                    </div>
-                  )}
-                  {!isCameraActive && (
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <p className="text-white">Camera is off</p>
-                    </div>
-                  )}
-                  {isInitializing && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                      <div className="text-center">
-                        <LoadingSpinner size="lg" />
-                        <p className="text-white mt-2">Initializing MediaPipe...</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
+              <Tabs value={activeTab} onValueChange={setActiveTab}>
+                <TabsList className="w-full mb-4">
+                  <TabsTrigger value="camera">Camera</TabsTrigger>
+                  <TabsTrigger value="categories">Gesture Categories</TabsTrigger>
+                  <TabsTrigger value="github">GitHub</TabsTrigger>
+                </TabsList>
 
-                <div className="flex gap-4 mb-6">
-                  <Button
-                    onClick={toggleCamera}
-                    className={`${
-                      isCameraActive
-                        ? "bg-red-500 hover:bg-red-600"
-                        : "bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
-                    }`}
-                    disabled={isInitializing}
-                  >
-                    {isInitializing ? (
-                      <LoadingSpinner className="mr-2" />
-                    ) : isCameraActive ? (
-                      <CameraOff className="mr-2 h-4 w-4" />
-                    ) : (
-                      <Camera className="mr-2 h-4 w-4" />
-                    )}
-                    {isInitializing ? "Initializing..." : isCameraActive ? "Stop Camera" : "Start Camera"}
-                  </Button>
-                </div>
-
-                <div className="w-full space-y-4">
-                  <div className="grid grid-cols-1 gap-2">
-                    <Label htmlFor="gestureName">Gesture Name</Label>
-                    <Input
-                      id="gestureName"
-                      placeholder="Enter gesture name (e.g., Hello, Thank You)"
-                      value={gestureName}
-                      onChange={(e) => setGestureName(e.target.value)}
-                      disabled={isCollecting}
-                    />
-                  </div>
-
-                  {isCollecting && (
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <span>Collection Progress</span>
-                        <span>
-                          {sampleFrameCount}/{totalSampleFrames} frames
-                        </span>
-                      </div>
-                      <Progress value={collectionProgress} className="h-2" />
-                    </div>
-                  )}
-
-                  {collectionError && (
-                    <Alert variant="destructive" className="mt-2">
-                      <AlertTitle>Collection Error</AlertTitle>
-                      <AlertDescription>{collectionError}</AlertDescription>
-                    </Alert>
-                  )}
-
-                  {debugInfo && <div className="text-sm text-muted-foreground bg-muted p-2 rounded">{debugInfo}</div>}
-
-                  <div className="flex gap-4">
-                    <Button
-                      onClick={startCollecting}
-                      disabled={!isCameraActive || isCollecting || !gestureName || !detectionActive || isInitializing}
-                      className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 flex-1"
-                    >
-                      {isCollecting ? (
-                        <>
-                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                          Collecting...
-                        </>
-                      ) : (
-                        "Collect Sample"
+                <TabsContent value="camera">
+                  <div className="flex flex-col items-center">
+                    <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden mb-6">
+                      <video
+                        ref={videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        style={{ objectFit: "cover" }}
+                        className={`absolute inset-0 w-full h-full ${isCameraActive ? "opacity-100" : "opacity-0"}`}
+                      />
+                      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+                      {isCameraActive && !isCollecting && (
+                        <div
+                          className={`absolute top-2 left-2 right-2 px-3 py-2 rounded text-sm font-medium text-center ${
+                            handDetected ? "bg-green-500/70 text-white" : "bg-red-500/70 text-white"
+                          }`}
+                        >
+                          {handDetected
+                            ? "Hand Detected ✓ Ready to collect samples"
+                            : "No Hand Detected - Please position your hand in view"}
+                        </div>
                       )}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={resetGestures}
-                      disabled={gestures.length === 0}
-                      className="flex-1"
-                    >
-                      <Trash className="mr-2 h-4 w-4" />
-                      Reset All
-                    </Button>
+                      {isCameraActive && (
+                        <div
+                          className={`absolute bottom-2 right-2 px-2 py-1 rounded text-xs ${
+                            isCollecting
+                              ? "bg-blue-500/70 text-white"
+                              : handDetected
+                                ? "bg-green-500/70 text-white"
+                                : "bg-red-500/70 text-white"
+                          }`}
+                        >
+                          {isCollecting
+                            ? `Collecting: ${sampleFrameCount}/${totalSampleFrames}`
+                            : handDetected
+                              ? "Hand Detected ✓"
+                              : "No Hand Detected - Position your hand in view"}
+                        </div>
+                      )}
+                      {!isCameraActive && (
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <p className="text-white">Camera is off</p>
+                        </div>
+                      )}
+                      {isInitializing && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                          <div className="text-center">
+                            <LoadingSpinner size="lg" />
+                            <p className="text-white mt-2">Initializing MediaPipe...</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex gap-4 mb-6">
+                      <Button
+                        onClick={toggleCamera}
+                        className={`${
+                          isCameraActive
+                            ? "bg-red-500 hover:bg-red-600"
+                            : "bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
+                        }`}
+                        disabled={isInitializing}
+                      >
+                        {isInitializing ? (
+                          <LoadingSpinner className="mr-2" />
+                        ) : isCameraActive ? (
+                          <CameraOff className="mr-2 h-4 w-4" />
+                        ) : (
+                          <Camera className="mr-2 h-4 w-4" />
+                        )}
+                        {isInitializing ? "Initializing..." : isCameraActive ? "Stop Camera" : "Start Camera"}
+                      </Button>
+                    </div>
+
+                    <div className="w-full space-y-4">
+                      <div className="grid grid-cols-1 gap-2">
+                        <Label htmlFor="gestureName">Gesture Name</Label>
+                        <Input
+                          id="gestureName"
+                          placeholder="Enter gesture name (e.g., Hello, Thank You)"
+                          value={gestureName}
+                          onChange={(e) => setGestureName(e.target.value)}
+                          disabled={isCollecting}
+                        />
+                      </div>
+
+                      {isCollecting && (
+                        <div className="space-y-2">
+                          <div className="flex justify-between">
+                            <span>Collection Progress</span>
+                            <span>
+                              {sampleFrameCount}/{totalSampleFrames} frames
+                            </span>
+                          </div>
+                          <Progress value={collectionProgress} className="h-2" />
+                        </div>
+                      )}
+
+                      {collectionError && (
+                        <Alert variant="destructive" className="mt-2">
+                          <AlertTitle>Collection Error</AlertTitle>
+                          <AlertDescription>{collectionError}</AlertDescription>
+                        </Alert>
+                      )}
+
+                      {debugInfo && (
+                        <div className="text-sm text-muted-foreground bg-muted p-2 rounded">{debugInfo}</div>
+                      )}
+
+                      <div className="flex gap-4">
+                        <Button
+                          onClick={startCollecting}
+                          disabled={
+                            !isCameraActive || isCollecting || !gestureName || !detectionActive || isInitializing
+                          }
+                          className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 flex-1"
+                        >
+                          {isCollecting ? (
+                            <>
+                              <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                              Collecting...
+                            </>
+                          ) : (
+                            "Collect Sample"
+                          )}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={resetGestures}
+                          disabled={gestures.length === 0}
+                          className="flex-1"
+                        >
+                          <Trash className="mr-2 h-4 w-4" />
+                          Reset All
+                        </Button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                </TabsContent>
+
+                <TabsContent value="categories">
+                  <GestureCategorySelector onSelectGesture={handleGestureSelect} />
+                </TabsContent>
+
+                <TabsContent value="github">
+                  <GitHubIntegrationPanel
+                    onTokenSaved={(success) => {
+                      if (success) {
+                        addLog("success", "GitHub integration configured successfully")
+                      }
+                    }}
+                  />
+                </TabsContent>
+              </Tabs>
             </CardContent>
           </Card>
         </motion.div>
@@ -1077,6 +1242,44 @@ export function LSTMGestureTrainer() {
                       onValueChange={(value) => setLearningRate(value[0])}
                       disabled={isTraining}
                     />
+                  </div>
+                </div>
+
+                <div className="space-y-4 border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
+                  <h3 className="text-lg font-medium">GitHub Integration</h3>
+                  <div className="space-y-2">
+                    <Label htmlFor="githubToken">GitHub Personal Access Token</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        id="githubToken"
+                        type="password"
+                        placeholder="Enter your GitHub token"
+                        value={githubToken}
+                        onChange={(e) => setGithubToken(e.target.value)}
+                      />
+                      <Button variant="outline" onClick={saveGitHubToken} disabled={!githubToken || isSavingToken}>
+                        {isSavingToken ? <RefreshCw className="h-4 w-4 animate-spin" /> : "Save"}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Token with 'repo' scope required. Create one at{" "}
+                      <a
+                        href="https://github.com/settings/tokens/new"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-500 hover:underline"
+                      >
+                        github.com/settings/tokens/new
+                      </a>
+                    </p>
+                    {githubTokenSaved && (
+                      <Alert variant="success" className="mt-2">
+                        <AlertTitle>Token Saved</AlertTitle>
+                        <AlertDescription>
+                          Your GitHub token has been saved and will be used for uploads.
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </div>
                 </div>
 
@@ -1227,6 +1430,17 @@ export function LSTMGestureTrainer() {
           </div>
         )}
       </motion.div>
+
+      {/* Reference Dialog */}
+      <Dialog open={showReferenceDialog} onOpenChange={setShowReferenceDialog}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Gesture References</DialogTitle>
+            <DialogDescription>Browse reference images for different sign language gestures</DialogDescription>
+          </DialogHeader>
+          <GestureReferenceImages selectedGesture={gestureName} />
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

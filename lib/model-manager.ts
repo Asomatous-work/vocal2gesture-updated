@@ -33,18 +33,66 @@ class ModelManager {
       } else {
         // Set default config if none exists
         this.githubConfig = {
-          owner: "Asomatous-work",
-          repo: "vocal2gesture-updated",
+          owner: "",
+          repo: "",
           branch: "main",
         }
       }
     } catch (error) {
       console.error("Error loading GitHub config:", error)
+      // Initialize with empty config if there's an error
+      this.githubConfig = {
+        owner: "",
+        repo: "",
+        branch: "main",
+      }
     }
   }
 
+  // Check if GitHub config is valid and complete
+  private isGitHubConfigValid(): boolean {
+    return !!(
+      this.githubConfig &&
+      this.githubConfig.owner &&
+      this.githubConfig.owner.trim() !== "" &&
+      this.githubConfig.repo &&
+      this.githubConfig.repo.trim() !== "" &&
+      this.githubConfig.token &&
+      this.githubConfig.token.trim() !== ""
+    )
+  }
+
   // Initialize GitHub integration
-  public initGitHub(config: { owner: string; repo: string; branch: string; token?: string }) {
+  public async initGitHub(config: { owner: string; repo: string; branch: string; token?: string }) {
+    // Validate required fields
+    if (!config.owner || !config.repo) {
+      throw new Error("GitHub owner and repository name are required")
+    }
+
+    // Validate the token if provided
+    if (config.token) {
+      try {
+        // Test the token with a simple GitHub API call
+        const response = await fetch("/api/github-config", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            token: config.token,
+          }),
+        })
+
+        if (!response.ok) {
+          const data = await response.json()
+          throw new Error(data.error || "Failed to validate GitHub token")
+        }
+      } catch (error) {
+        console.error("Error validating GitHub token:", error)
+        throw error
+      }
+    }
+
     this.githubConfig = config
 
     if (typeof window !== "undefined") {
@@ -248,9 +296,10 @@ class ModelManager {
   // Save model to GitHub - now using real GitHub API
   public async saveToGitHub() {
     if (typeof window === "undefined") return false
-    if (!this.githubConfig) {
-      console.error("GitHub configuration missing")
-      return false
+
+    // Validate GitHub config before proceeding
+    if (!this.isGitHubConfigValid()) {
+      throw new Error("Missing required GitHub configuration: owner, repo, and token are required")
     }
 
     try {
@@ -274,13 +323,13 @@ class ModelManager {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          owner: this.githubConfig.owner,
-          repo: this.githubConfig.repo,
-          branch: this.githubConfig.branch || "main",
+          owner: this.githubConfig!.owner,
+          repo: this.githubConfig!.repo,
+          branch: this.githubConfig!.branch || "main",
           path: "vocal2gestures-data.json",
           content,
           message: "Update gesture data",
-          token: this.githubConfig.token,
+          token: this.githubConfig!.token,
         }),
       })
 
@@ -300,13 +349,14 @@ class ModelManager {
       return true
     } catch (error) {
       console.error("Error saving to GitHub:", error)
-      return false
+      throw error
     }
   }
 
   // Save images to GitHub
   private async saveImagesToGitHub() {
-    if (!this.githubConfig || !this.githubConfig.token || this.signImages.length === 0) {
+    // Validate GitHub config before proceeding
+    if (!this.isGitHubConfigValid() || this.signImages.length === 0) {
       return false
     }
 
@@ -345,13 +395,13 @@ class ModelManager {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            owner: this.githubConfig.owner,
-            repo: this.githubConfig.repo,
-            branch: this.githubConfig.branch || "main",
+            owner: this.githubConfig!.owner,
+            repo: this.githubConfig!.repo,
+            branch: this.githubConfig!.branch || "main",
             path,
             content: base64Data,
             message: `Add sign image for ${image.word}`,
-            token: this.githubConfig.token,
+            token: this.githubConfig!.token,
           }),
         })
 
@@ -372,8 +422,16 @@ class ModelManager {
   // Load model from GitHub - now using real GitHub API
   public async loadFromGitHub() {
     if (typeof window === "undefined") return false
+
+    // Check if GitHub config exists
     if (!this.githubConfig) {
-      console.error("GitHub configuration missing")
+      console.log("GitHub configuration not found")
+      return false
+    }
+
+    // Validate GitHub config before proceeding
+    if (!this.githubConfig.owner || !this.githubConfig.repo || !this.githubConfig.token) {
+      console.log("Incomplete GitHub configuration")
       return false
     }
 
@@ -429,13 +487,14 @@ class ModelManager {
       return false
     } catch (error) {
       console.error("Error loading from GitHub:", error)
-      return false
+      throw error
     }
   }
 
   // Load images from GitHub
   private async loadImagesFromGitHub() {
-    if (!this.githubConfig) {
+    // Validate GitHub config before proceeding
+    if (!this.isGitHubConfigValid()) {
       return false
     }
 
@@ -447,11 +506,11 @@ class ModelManager {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          owner: this.githubConfig.owner,
-          repo: this.githubConfig.repo,
-          branch: this.githubConfig.branch || "main",
+          owner: this.githubConfig!.owner,
+          repo: this.githubConfig!.repo,
+          branch: this.githubConfig!.branch || "main",
           path: "images",
-          token: this.githubConfig.token,
+          token: this.githubConfig!.token,
         }),
       })
 
@@ -587,6 +646,19 @@ class ModelManager {
       console.error("Error consolidating models:", error)
       return false
     }
+  }
+
+  // Also update the isGitHubConfigValid method to be more lenient
+  private isGitHubConfigValid(): boolean {
+    return !!(
+      this.githubConfig &&
+      this.githubConfig.owner &&
+      this.githubConfig.owner.trim() !== "" &&
+      this.githubConfig.repo &&
+      this.githubConfig.repo.trim() !== "" &&
+      this.githubConfig.token &&
+      this.githubConfig.token.trim() !== ""
+    )
   }
 }
 
