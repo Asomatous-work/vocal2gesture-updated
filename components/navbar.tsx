@@ -40,6 +40,15 @@ export function Navbar() {
     { name: "Settings", path: "/settings", icon: <Settings className="h-5 w-5" /> },
   ]
 
+  const navigationItems = [
+    { name: "Home", href: "/" },
+    { name: "Speak to Sign", href: "/speak-to-sign" },
+    { name: "Sign to Speech", href: "/sign-to-speech" },
+    { name: "Training", href: "/training" },
+    { name: "Advanced Training", href: "/advanced-training" },
+    { name: "Settings", href: "/settings" },
+  ]
+
   return (
     <motion.nav
       initial={{ y: -100 }}
@@ -71,18 +80,18 @@ export function Navbar() {
           </motion.div>
 
           <div className="hidden md:flex md:items-center md:space-x-6">
-            {routes.map((route, index) => (
+            {navigationItems.map((route, index) => (
               <motion.div
-                key={route.path}
+                key={route.href}
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.3, delay: index * 0.1 }}
               >
                 <Link
-                  href={route.path}
+                  href={route.href}
                   className={cn(
                     "nav-link font-medium text-sm",
-                    pathname === route.path
+                    pathname === route.href
                       ? "text-purple-600 dark:text-purple-400 active"
                       : "text-gray-600 dark:text-gray-300 hover:text-purple-600 dark:hover:text-purple-400",
                   )}
@@ -140,24 +149,23 @@ export function Navbar() {
             className="md:hidden glass-card overflow-hidden"
           >
             <div className="px-2 pt-2 pb-3 space-y-1">
-              {routes.map((route, index) => (
+              {navigationItems.map((route, index) => (
                 <motion.div
-                  key={route.path}
+                  key={route.href}
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.3, delay: index * 0.1 }}
                 >
                   <Link
-                    href={route.path}
+                    href={route.href}
                     className={cn(
                       "flex items-center px-3 py-2 rounded-md text-base font-medium",
-                      pathname === route.path
+                      pathname === route.href
                         ? "gradient-bg text-white"
                         : "text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800",
                     )}
                     onClick={closeMenu}
                   >
-                    <span className="mr-3">{route.icon}</span>
                     {route.name}
                   </Link>
                 </motion.div>

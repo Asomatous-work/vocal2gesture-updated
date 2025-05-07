@@ -3,11 +3,11 @@
 import type React from "react"
 
 import { useState, useRef, useEffect } from "react"
-import { Camera, CameraOff, Save, Trash2, AlertCircle, Download, Upload } from "lucide-react"
+import { Camera, CameraOff, Save, Trash2, AlertCircle, Download, Upload, Server } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card"
 import { HolisticDetection } from "@/lib/mediapipe-holistic"
 import { modelManager } from "@/lib/model-manager"
 import { LSTMGestureModel } from "@/lib/lstm-gesture-model"
@@ -17,6 +17,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Switch } from "@/components/ui/switch"
+import { pythonBackendService } from "@/lib/python-backend-service"
 import * as tf from "@tensorflow/tfjs"
 
 interface GestureData {
@@ -33,7 +35,7 @@ interface LogEntry {
   timestamp: Date
 }
 
-export function SignLanguageTrainer() {
+export function SignLanguageTrainerWithPython() {
   const [isCameraActive, setIsCameraActive] = useState(false)
   const [isCollecting, setIsCollecting] = useState(false)
   const [isTraining, setIsTraining] = useState(false)
@@ -58,8 +60,12 @@ export function SignLanguageTrainer() {
   const [isInitializing, setIsInitializing] = useState(false)
   const [handDetected, setHandDetected] = useState(false)
   const [activeTab, setActiveTab] = useState("camera")
-  const [isExporting, setIsExporting] = useState(isExporting)
+  const [isExporting, setIsExporting] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
+  const [usePythonBackend, setUsePythonBackend] = useState(false)
+  const [pythonBackendAvailable, setPythonBackendAvailable] = useState(false)
+  const [pythonModels, setPythonModels] = useState<any[]>([])
+  const [selectedPythonModel, setSelectedPythonModel] = useState("")
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -72,6 +78,35 @@ export function SignLanguageTrainer() {
   const collectionIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
+
+  // Check if Python backend is available
+  useEffect(() => {
+    const checkPythonBackend = async () => {
+      try {
+        const available = await pythonBackendService.checkAvailability()
+        setPythonBackendAvailable(available)
+
+        if (available) {
+          addLog("success", "Python backend is available")
+
+          // Load available Python models
+          const modelsResponse = await pythonBackendService.listModels()
+          if (modelsResponse.models) {
+            setPythonModels(modelsResponse.models)
+            addLog("info", `Found ${modelsResponse.models.length} Python models`)
+          }
+        } else {
+          addLog("warning", "Python backend is not available. Using JavaScript only.")
+        }
+      } catch (error) {
+        console.error("Error checking Python backend:", error)
+        setPythonBackendAvailable(false)
+        addLog("error", "Failed to connect to Python backend")
+      }
+    }
+
+    checkPythonBackend()
+  }, [])
 
   // Initialize TensorFlow.js
   useEffect(() => {
@@ -152,66 +187,110 @@ export function SignLanguageTrainer() {
       try {
         if (!holisticRef.current) {
           holisticRef.current = new HolisticDetection({
-            onResults: (results) => {
+            onResults: async (results) => {
               drawResults(results)
 
-              // Use a more lenient approach to hand detection
+              // Check if hands are detected - use a more lenient detection approach
               const hasLeftHand = results.leftHandLandmarks && results.leftHandLandmarks.length > 0
               const hasRightHand = results.rightHandLandmarks && results.rightHandLandmarks.length > 0
 
-              // Update hand detection status with more stability - consider a hand detected if ANY landmarks are visible
-              const handVisible =
-                hasLeftHand ||
-                hasRightHand ||
-                (results.leftHandLandmarks && results.leftHandLandmarks.some((lm) => lm)) ||
-                (results.rightHandLandmarks && results.rightHandLandmarks.some((lm) => lm))
-
               // Update hand detection status
               const wasHandDetected = handDetected
-              setHandDetected(handVisible)
-
-              // For collection, be even more lenient
-              const handDetectedForCollection =
-                handVisible || results.leftHandLandmarks !== undefined || results.rightHandLandmarks !== undefined
+              setHandDetected(hasLeftHand || hasRightHand)
 
               // If collecting samples, store the landmarks
               if (isCollecting && gestureName) {
-                const landmarks = extractLandmarks(results)
+                let landmarks
 
-                // Use more lenient hand detection for collection
-                if (handDetectedForCollection) {
-                  landmarksRef.current.push(landmarks)
+                if (usePythonBackend && pythonBackendAvailable) {
+                  // For Python backend, we need to send the image data
+                  try {
+                    // Convert canvas to base64
+                    const imageData = canvasRef.current?.toDataURL("image/jpeg") || ""
 
-                  // Update sample collection progress
-                  setSampleFrameCount(landmarksRef.current.length)
-                  setCollectionProgress((landmarksRef.current.length / totalSampleFrames) * 100)
+                    // Process with Python backend
+                    const response = await pythonBackendService.processFrame(imageData)
 
-                  // Add sample to current gesture after collecting frames
-                  if (landmarksRef.current.length >= totalSampleFrames) {
-                    addSampleToGesture()
-                    landmarksRef.current = []
-                    setSampleFrameCount(0)
-                    setCollectionProgress(0)
-                    setIsCollecting(false)
+                    if (response.handDetected) {
+                      landmarks = response.landmarks
+                      landmarksRef.current.push(landmarks)
 
-                    // Clear any existing timeout
-                    if (collectionTimeoutRef.current) {
-                      clearTimeout(collectionTimeoutRef.current)
-                      collectionTimeoutRef.current = null
+                      // Update sample collection progress
+                      setSampleFrameCount(landmarksRef.current.length)
+                      setCollectionProgress((landmarksRef.current.length / totalSampleFrames) * 100)
+
+                      // Add sample to current gesture after collecting frames
+                      if (landmarksRef.current.length >= totalSampleFrames) {
+                        if (usePythonBackend && pythonBackendAvailable) {
+                          // Send collected frames to Python backend
+                          try {
+                            const response = await pythonBackendService.collectSample(gestureName, landmarksRef.current)
+
+                            if (response.success) {
+                              addLog("success", `Sample collected for gesture "${gestureName}" with Python backend`)
+                              toast({
+                                title: "Sample Collected",
+                                description: `Added a new sample for "${gestureName}" with Python backend`,
+                              })
+                            }
+                          } catch (error) {
+                            console.error("Error collecting sample with Python backend:", error)
+                            addLog("error", `Python backend error: ${error.message}`)
+                          }
+                        } else {
+                          // Use JavaScript implementation
+                          addSampleToGesture()
+                        }
+
+                        // Reset collection state
+                        landmarksRef.current = []
+                        setSampleFrameCount(0)
+                        setCollectionProgress(0)
+                        setIsCollecting(false)
+
+                        // Clear any existing timeout
+                        if (collectionTimeoutRef.current) {
+                          clearTimeout(collectionTimeoutRef.current)
+                          collectionTimeoutRef.current = null
+                        }
+                      }
                     }
+                  } catch (error) {
+                    console.error("Error processing frame with Python backend:", error)
+                  }
+                } else {
+                  // Use JavaScript implementation
+                  landmarks = extractLandmarks(results)
 
-                    // Clear collection interval
-                    if (collectionIntervalRef.current) {
-                      clearInterval(collectionIntervalRef.current)
-                      collectionIntervalRef.current = null
+                  // Only add landmarks if we have valid hand data
+                  if (hasLeftHand || hasRightHand) {
+                    landmarksRef.current.push(landmarks)
+
+                    // Update sample collection progress
+                    setSampleFrameCount(landmarksRef.current.length)
+                    setCollectionProgress((landmarksRef.current.length / totalSampleFrames) * 100)
+
+                    // Add sample to current gesture after collecting frames
+                    if (landmarksRef.current.length >= totalSampleFrames) {
+                      addSampleToGesture()
+                      landmarksRef.current = []
+                      setSampleFrameCount(0)
+                      setCollectionProgress(0)
+                      setIsCollecting(false)
+
+                      // Clear any existing timeout
+                      if (collectionTimeoutRef.current) {
+                        clearTimeout(collectionTimeoutRef.current)
+                        collectionTimeoutRef.current = null
+                      }
+
+                      toast({
+                        title: "Sample Collected",
+                        description: `Added a new sample for "${gestureName}"`,
+                      })
+
+                      addLog("success", `Sample collected for gesture "${gestureName}"`)
                     }
-
-                    toast({
-                      title: "Sample Collected",
-                      description: `Added a new sample for "${gestureName}"`,
-                    })
-
-                    addLog("success", `Sample collected for gesture "${gestureName}"`)
                   }
                 }
               }
@@ -252,7 +331,7 @@ export function SignLanguageTrainer() {
         setDetectionActive(false)
       }
     }
-  }, [isCameraActive])
+  }, [isCameraActive, usePythonBackend, pythonBackendAvailable])
 
   // Toggle camera
   const toggleCamera = async () => {
@@ -373,8 +452,17 @@ export function SignLanguageTrainer() {
       return
     }
 
-    // Proceed with collection regardless of hand detection status
-    addLog("info", "Starting collection - position your hand in the camera view")
+    // Force collection even if hand is not detected, but warn the user
+    if (!handDetected) {
+      toast({
+        title: "Warning: No Hand Detected",
+        description: "No hand is currently detected. Try repositioning your hand or proceed anyway.",
+        variant: "warning",
+      })
+      addLog("warning", "Collecting sample with no hand detected - results may be poor")
+    } else {
+      addLog("info", "Hand detected - starting collection")
+    }
 
     // Reset collection state
     landmarksRef.current = []
@@ -388,31 +476,54 @@ export function SignLanguageTrainer() {
       description: "Hold the gesture steady in front of the camera.",
     })
 
-    addLog("info", `Started collecting sample for gesture "${gestureName}"`)
+    addLog(
+      "info",
+      `Started collecting sample for gesture "${gestureName}"${usePythonBackend ? " with Python backend" : ""}`,
+    )
 
     // Add a safety timeout to prevent getting stuck
     if (collectionTimeoutRef.current) {
       clearTimeout(collectionTimeoutRef.current)
     }
 
-    // Set a longer timeout to ensure collection has time to work
+    // Set up a collection interval to actively check for hand landmarks
+    if (collectionIntervalRef.current) {
+      clearInterval(collectionIntervalRef.current)
+    }
+
     collectionTimeoutRef.current = setTimeout(() => {
       if (isCollecting) {
         if (landmarksRef.current.length > 0 && landmarksRef.current.length < totalSampleFrames) {
           // If we have some frames but not enough, save what we've got
-          addSampleToGesture()
+          if (usePythonBackend && pythonBackendAvailable) {
+            // Send partial frames to Python backend
+            pythonBackendService
+              .collectSample(gestureName, landmarksRef.current)
+              .then((response) => {
+                addLog(
+                  "warning",
+                  `Collection timeout - saved partial sample with ${landmarksRef.current.length} frames to Python backend`,
+                )
+              })
+              .catch((error) => {
+                addLog("error", `Failed to save partial sample to Python backend: ${error.message}`)
+              })
+          } else {
+            addSampleToGesture()
+          }
+
           addLog("warning", `Collection timeout - saved partial sample with ${landmarksRef.current.length} frames`)
           toast({
             title: "Partial Sample Collected",
             description: `Saved ${landmarksRef.current.length} frames for "${gestureName}"`,
           })
         } else if (landmarksRef.current.length === 0) {
-          // Force collection even if no landmarks were detected
-          addLog("warning", "No hand landmarks detected, attempting forced collection")
-          addSampleToGesture()
+          addLog("error", "Collection failed - no hand gestures detected")
+          setCollectionError("No hand gestures were detected. Please try again.")
           toast({
-            title: "Sample Collected",
-            description: `Forced collection for "${gestureName}"`,
+            title: "Collection Failed",
+            description: "No hand gestures were detected. Please try again.",
+            variant: "destructive",
           })
         }
 
@@ -421,9 +532,15 @@ export function SignLanguageTrainer() {
         setCollectionProgress(0)
         setIsCollecting(false)
 
+        // Clear collection interval
+        if (collectionIntervalRef.current) {
+          clearInterval(collectionIntervalRef.current)
+          collectionIntervalRef.current = null
+        }
+
         collectionTimeoutRef.current = null
       }
-    }, 15000) // 15 second timeout (increased from 10)
+    }, 10000) // 10 second timeout
   }
 
   // Extract relevant landmarks from MediaPipe results
@@ -528,6 +645,17 @@ export function SignLanguageTrainer() {
         progressY + progressHeight + 15,
       )
     }
+
+    // Add Python backend indicator if active
+    if (usePythonBackend && pythonBackendAvailable) {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.7)"
+      ctx.fillRect(10, height - 40, 180, 30)
+
+      ctx.fillStyle = "rgba(0, 255, 0, 0.9)"
+      ctx.font = "14px Arial"
+      ctx.textAlign = "left"
+      ctx.fillText("Python Backend Active", 20, height - 20)
+    }
   }
 
   // Reset all collected gestures
@@ -572,82 +700,120 @@ export function SignLanguageTrainer() {
 
   // Save the model to localStorage
   const saveModel = async () => {
-    if (!lstmModelRef.current || !isModelLoaded) {
-      toast({
-        title: "No Model Available",
-        description: "Please train an LSTM model first.",
-        variant: "destructive",
-      })
-      return
-    }
+    if (usePythonBackend && pythonBackendAvailable) {
+      // Save model with Python backend
+      try {
+        setIsSaving(true)
+        addLog("info", "Saving model with Python backend...")
 
-    setIsSaving(true)
-    addLog("info", "Saving LSTM model to localStorage...")
+        const modelName = `Model_${new Date().toISOString().slice(0, 10)}`
+        const response = await pythonBackendService.saveModel(modelName)
 
-    try {
-      // Generate a unique model ID
-      const modelId = `lstm_model_${Date.now()}`
+        if (response.success) {
+          toast({
+            title: "Model Saved",
+            description: `Model saved successfully with Python backend (ID: ${response.modelId})`,
+          })
 
-      // Save the model
-      await lstmModelRef.current.saveToLocalStorage(modelId)
+          addLog("success", `Model saved with Python backend (ID: ${response.modelId})`)
 
-      // Save model metadata
-      const savedModels = JSON.parse(localStorage.getItem("savedLSTMModels") || "[]")
-      savedModels.push({
-        id: modelId,
-        name: `LSTM Model ${savedModels.length + 1}`,
-        gestures: gestures.map((g) => g.name),
-        accuracy: modelAccuracy,
-        timestamp: new Date().toISOString(),
-      })
-      localStorage.setItem("savedLSTMModels", JSON.stringify(savedModels))
-
-      // Set as current model
-      localStorage.setItem("currentLSTMModel", modelId)
-
-      toast({
-        title: "Model Saved",
-        description: "Your LSTM model has been saved successfully to local storage.",
-      })
-
-      addLog("success", `LSTM model saved successfully with ID: ${modelId}`)
-
-      // Also save to model manager for use in sign-to-speech
-      for (const gesture of gestures) {
-        modelManager.addGesture({
-          name: gesture.name,
-          landmarks: gesture.landmarks,
-          samples: gesture.samples,
-        })
-      }
-
-      // Save to GitHub if configured
-      if (modelManager.isGitHubConfigured()) {
-        try {
-          const saved = await modelManager.saveToGitHub()
-          if (saved) {
-            addLog("success", "Model also saved to GitHub successfully")
+          // Refresh Python models list
+          const modelsResponse = await pythonBackendService.listModels()
+          if (modelsResponse.models) {
+            setPythonModels(modelsResponse.models)
           }
-        } catch (error) {
-          console.error("GitHub save error:", error)
-          addLog("warning", `GitHub save failed: ${error.message}. Model is still saved locally.`)
         }
-      }
-    } catch (error) {
-      console.error("Error saving model:", error)
-      toast({
-        title: "Save Error",
-        description: "There was an error saving your model.",
-        variant: "destructive",
-      })
+      } catch (error) {
+        console.error("Error saving model with Python backend:", error)
+        addLog("error", `Failed to save model with Python backend: ${error.message}`)
 
-      addLog("error", `Failed to save model: ${error}`)
-    } finally {
-      setIsSaving(false)
+        toast({
+          title: "Save Error",
+          description: "Failed to save model with Python backend.",
+          variant: "destructive",
+        })
+      } finally {
+        setIsSaving(false)
+      }
+    } else {
+      // Save model with JavaScript
+      if (!lstmModelRef.current || !isModelLoaded) {
+        toast({
+          title: "No Model Available",
+          description: "Please train an LSTM model first.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setIsSaving(true)
+      addLog("info", "Saving LSTM model to localStorage...")
+
+      try {
+        // Generate a unique model ID
+        const modelId = `lstm_model_${Date.now()}`
+
+        // Save the model
+        await lstmModelRef.current.saveToLocalStorage(modelId)
+
+        // Save model metadata
+        const savedModels = JSON.parse(localStorage.getItem("savedLSTMModels") || "[]")
+        savedModels.push({
+          id: modelId,
+          name: `LSTM Model ${savedModels.length + 1}`,
+          gestures: gestures.map((g) => g.name),
+          accuracy: modelAccuracy,
+          timestamp: new Date().toISOString(),
+        })
+        localStorage.setItem("savedLSTMModels", JSON.stringify(savedModels))
+
+        // Set as current model
+        localStorage.setItem("currentLSTMModel", modelId)
+
+        toast({
+          title: "Model Saved",
+          description: "Your LSTM model has been saved successfully to local storage.",
+        })
+
+        addLog("success", `LSTM model saved successfully with ID: ${modelId}`)
+
+        // Also save to model manager for use in sign-to-speech
+        for (const gesture of gestures) {
+          modelManager.addGesture({
+            name: gesture.name,
+            landmarks: gesture.landmarks,
+            samples: gesture.samples,
+          })
+        }
+
+        // Save to GitHub if configured
+        if (modelManager.isGitHubConfigured()) {
+          try {
+            const saved = await modelManager.saveToGitHub()
+            if (saved) {
+              addLog("success", "Model also saved to GitHub successfully")
+            }
+          } catch (error) {
+            console.error("GitHub save error:", error)
+            addLog("warning", `GitHub save failed: ${error.message}. Model is still saved locally.`)
+          }
+        }
+      } catch (error) {
+        console.error("Error saving model:", error)
+        toast({
+          title: "Save Error",
+          description: "There was an error saving your model.",
+          variant: "destructive",
+        })
+
+        addLog("error", `Failed to save model: ${error}`)
+      } finally {
+        setIsSaving(false)
+      }
     }
   }
 
-  // Train the LSTM model with collected gestures
+  // Train the model
   const trainModel = async () => {
     if (gestures.length < 1) {
       toast({
@@ -660,130 +826,246 @@ export function SignLanguageTrainer() {
       return
     }
 
-    if (!tfReady) {
-      toast({
-        title: "TensorFlow Not Ready",
-        description: "Please wait for TensorFlow.js to initialize.",
-        variant: "destructive",
-      })
+    if (usePythonBackend && pythonBackendAvailable) {
+      // Train with Python backend
+      try {
+        setIsTraining(true)
+        setCurrentEpoch(0)
+        setTrainingProgress(0)
 
-      addLog("warning", "Cannot train model: TensorFlow.js not ready")
-      return
-    }
+        addLog("info", `Starting training with Python backend (${gestures.length} gestures, ${totalEpochs} epochs)`)
 
-    setIsTraining(true)
-    setCurrentEpoch(0)
-    setTrainingProgress(0)
-    setEpochLoss(1.0)
+        const response = await pythonBackendService.trainModel(gestures, totalEpochs, learningRate)
 
-    addLog("info", `Starting LSTM training with ${gestures.length} gestures over ${totalEpochs} epochs`)
-    addLog("info", `Learning rate: ${learningRate}, Hidden units: ${hiddenUnits}`)
+        if (response.success) {
+          setModelAccuracy(response.accuracy * 100)
+          setEpochLoss(response.loss)
+          setIsModelLoaded(true)
 
-    try {
-      // Prepare training data
-      const trainingData: any[] = []
-      const labels: string[] = []
+          toast({
+            title: "Training Complete",
+            description: `Model trained with ${gestures.length} gestures and achieved ${(response.accuracy * 100).toFixed(1)}% accuracy.`,
+          })
 
-      // Log the captured gestures being used for training
-      addLog("info", "Preparing gesture data for training:")
-      gestures.forEach((gesture) => {
-        addLog("info", `  - ${gesture.name}: ${gesture.samples} samples, ${gesture.landmarks.length} landmarks`)
+          addLog(
+            "success",
+            `Training completed with Python backend (accuracy: ${(response.accuracy * 100).toFixed(1)}%)`,
+          )
 
-        // Add each sample to training data
-        if (gesture.sampleData && gesture.sampleData.length > 0) {
-          for (const sample of gesture.sampleData) {
-            if (sample && sample.length > 0) {
-              trainingData.push(sample)
+          // Refresh Python models list
+          const modelsResponse = await pythonBackendService.listModels()
+          if (modelsResponse.models) {
+            setPythonModels(modelsResponse.models)
+          }
+        }
+      } catch (error) {
+        console.error("Error training model with Python backend:", error)
+        addLog("error", `Training failed with Python backend: ${error.message}`)
+
+        toast({
+          title: "Training Error",
+          description: "Failed to train model with Python backend.",
+          variant: "destructive",
+        })
+      } finally {
+        setIsTraining(false)
+        setTrainingProgress(100)
+      }
+    } else {
+      // Train with JavaScript
+      if (!tfReady) {
+        toast({
+          title: "TensorFlow Not Ready",
+          description: "Please wait for TensorFlow.js to initialize.",
+          variant: "destructive",
+        })
+
+        addLog("warning", "Cannot train model: TensorFlow.js not ready")
+        return
+      }
+
+      setIsTraining(true)
+      setCurrentEpoch(0)
+      setTrainingProgress(0)
+      setEpochLoss(1.0)
+
+      addLog("info", `Starting LSTM training with ${gestures.length} gestures over ${totalEpochs} epochs`)
+      addLog("info", `Learning rate: ${learningRate}, Hidden units: ${hiddenUnits}`)
+
+      try {
+        // Prepare training data
+        const trainingData: any[] = []
+        const labels: string[] = []
+
+        // Log the captured gestures being used for training
+        addLog("info", "Preparing gesture data for training:")
+        gestures.forEach((gesture) => {
+          addLog("info", `  - ${gesture.name}: ${gesture.samples} samples, ${gesture.landmarks.length} landmarks`)
+
+          // Add each sample to training data
+          if (gesture.sampleData && gesture.sampleData.length > 0) {
+            for (const sample of gesture.sampleData) {
+              if (sample && sample.length > 0) {
+                trainingData.push(sample)
+                labels.push(gesture.name)
+              }
+            }
+          } else {
+            // If sampleData is not available, create it from landmarks
+            const landmarkChunks = []
+            for (let i = 0; i < gesture.landmarks.length; i += totalSampleFrames) {
+              const sampleLandmarks = gesture.landmarks.slice(i, i + totalSampleFrames)
+              if (sampleLandmarks.length === totalSampleFrames) {
+                landmarkChunks.push(sampleLandmarks)
+              }
+            }
+
+            // Add each chunk as a sample
+            for (const chunk of landmarkChunks) {
+              trainingData.push(chunk)
               labels.push(gesture.name)
             }
           }
-        } else {
-          // If sampleData is not available, create it from landmarks
-          const landmarkChunks = []
-          for (let i = 0; i < gesture.landmarks.length; i += totalSampleFrames) {
-            const sampleLandmarks = gesture.landmarks.slice(i, i + totalSampleFrames)
-            if (sampleLandmarks.length === totalSampleFrames) {
-              landmarkChunks.push(sampleLandmarks)
+        })
+
+        if (trainingData.length === 0) {
+          throw new Error("No valid training data available")
+        }
+
+        addLog("info", `Total training samples: ${trainingData.length}`)
+        addLog("info", "Initializing LSTM model architecture...")
+
+        // Create or update LSTM model
+        if (!lstmModelRef.current) {
+          const config = {
+            sequenceLength: totalSampleFrames,
+            numFeatures: 63, // 21 landmarks x 3 coordinates
+            numClasses: new Set(labels).size,
+            hiddenUnits: hiddenUnits,
+            learningRate: learningRate,
+          }
+
+          lstmModelRef.current = new LSTMGestureModel(config)
+        }
+
+        // Train normalizer first
+        addLog("info", "Training data normalizer...")
+        await lstmModelRef.current.trainNormalizer(trainingData)
+        addLog("success", "Normalizer trained successfully")
+
+        // Train the model
+        addLog("info", "Starting LSTM model training...")
+        const history = await lstmModelRef.current.train(trainingData, labels, {
+          epochs: totalEpochs,
+          batchSize: 16,
+          validationSplit: 0.1,
+          onEpochEnd: (epoch, logs) => {
+            setCurrentEpoch(epoch + 1)
+            setTrainingProgress(((epoch + 1) / totalEpochs) * 100)
+
+            if (logs.loss !== undefined) {
+              setEpochLoss(logs.loss)
             }
-          }
 
-          // Add each chunk as a sample
-          for (const chunk of landmarkChunks) {
-            trainingData.push(chunk)
-            labels.push(gesture.name)
-          }
-        }
-      })
+            if (logs.acc !== undefined) {
+              setModelAccuracy(logs.acc * 100)
+            }
 
-      if (trainingData.length === 0) {
-        throw new Error("No valid training data available")
+            addLog(
+              "epoch",
+              `Epoch ${epoch + 1}/${totalEpochs} - Loss: ${logs.loss?.toFixed(4) || "N/A"} - Accuracy: ${(logs.acc !== undefined ? logs.acc * 100 : 0).toFixed(2)}%`,
+            )
+          },
+          onTrainEnd: () => {
+            addLog("success", "LSTM model training completed successfully")
+          },
+        })
+
+        setIsModelLoaded(true)
+        toast({
+          title: "Training Complete",
+          description: `Model trained with ${gestures.length} gestures and achieved ${modelAccuracy.toFixed(1)}% accuracy.`,
+        })
+      } catch (error) {
+        console.error("Error training LSTM model:", error)
+        addLog("error", `Training error: ${error}`)
+
+        toast({
+          title: "Training Error",
+          description: "There was an error training the LSTM model.",
+          variant: "destructive",
+        })
+      } finally {
+        setIsTraining(false)
       }
+    }
+  }
 
-      addLog("info", `Total training samples: ${trainingData.length}`)
-      addLog("info", "Initializing LSTM model architecture...")
-
-      // Create or update LSTM model
-      if (!lstmModelRef.current) {
-        const config = {
-          sequenceLength: totalSampleFrames,
-          numFeatures: 63, // 21 landmarks x 3 coordinates
-          numClasses: new Set(labels).size,
-          hiddenUnits: hiddenUnits,
-          learningRate: learningRate,
-        }
-
-        lstmModelRef.current = new LSTMGestureModel(config)
-      }
-
-      // Train normalizer first
-      addLog("info", "Training data normalizer...")
-      await lstmModelRef.current.trainNormalizer(trainingData)
-      addLog("success", "Normalizer trained successfully")
-
-      // Train the model
-      addLog("info", "Starting LSTM model training...")
-      const history = await lstmModelRef.current.train(trainingData, labels, {
-        epochs: totalEpochs,
-        batchSize: 16,
-        validationSplit: 0.1,
-        onEpochEnd: (epoch, logs) => {
-          setCurrentEpoch(epoch + 1)
-          setTrainingProgress(((epoch + 1) / totalEpochs) * 100)
-
-          if (logs.loss !== undefined) {
-            setEpochLoss(logs.loss)
-          }
-
-          if (logs.acc !== undefined) {
-            setModelAccuracy(logs.acc * 100)
-          }
-
-          addLog(
-            "epoch",
-            `Epoch ${epoch + 1}/${totalEpochs} - Loss: ${logs.loss?.toFixed(4) || "N/A"} - Accuracy: ${(logs.acc !== undefined ? logs.acc * 100 : 0).toFixed(2)}%`,
-          )
-        },
-        onTrainEnd: () => {
-          addLog("success", "LSTM model training completed successfully")
-        },
-      })
-
-      setIsModelLoaded(true)
+  // Toggle Python backend
+  const togglePythonBackend = () => {
+    if (!pythonBackendAvailable && !usePythonBackend) {
       toast({
-        title: "Training Complete",
-        description: `Model trained with ${gestures.length} gestures and achieved ${modelAccuracy.toFixed(1)}% accuracy.`,
-      })
-    } catch (error) {
-      console.error("Error training LSTM model:", error)
-      addLog("error", `Training error: ${error}`)
-
-      toast({
-        title: "Training Error",
-        description: "There was an error training the LSTM model.",
+        title: "Python Backend Not Available",
+        description: "The Python backend is not available. Make sure it's running and try again.",
         variant: "destructive",
       })
-    } finally {
-      setIsTraining(false)
+      return
+    }
+
+    setUsePythonBackend(!usePythonBackend)
+    addLog("info", `Switched to ${!usePythonBackend ? "Python" : "JavaScript"} backend`)
+
+    toast({
+      title: `Using ${!usePythonBackend ? "Python" : "JavaScript"} Backend`,
+      description: `Now using ${!usePythonBackend ? "Python" : "JavaScript"} for gesture recognition.`,
+    })
+  }
+
+  // Load a Python model
+  const loadPythonModel = async (modelId: string) => {
+    if (!pythonBackendAvailable) {
+      toast({
+        title: "Python Backend Not Available",
+        description: "The Python backend is not available. Make sure it's running and try again.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      setIsModelLoaded(false)
+      addLog("info", `Loading Python model: ${modelId}...`)
+
+      const response = await pythonBackendService.loadModel(modelId)
+
+      if (response.success) {
+        setIsModelLoaded(true)
+        setSelectedPythonModel(modelId)
+
+        toast({
+          title: "Model Loaded",
+          description: "Python model loaded successfully.",
+        })
+
+        addLog("success", `Python model loaded successfully: ${modelId}`)
+      } else {
+        toast({
+          title: "Load Error",
+          description: "Failed to load Python model.",
+          variant: "destructive",
+        })
+
+        addLog("error", "Failed to load Python model")
+      }
+    } catch (error) {
+      console.error("Error loading Python model:", error)
+      addLog("error", `Failed to load Python model: ${error.message}`)
+
+      toast({
+        title: "Load Error",
+        description: "There was an error loading the Python model.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -799,6 +1081,7 @@ export function SignLanguageTrainer() {
           version: "1.0",
           totalGestures: gestures.length,
           totalSamples: gestures.reduce((sum, gesture) => sum + gesture.samples, 0),
+          usedPythonBackend: usePythonBackend && pythonBackendAvailable,
         },
       }
 
@@ -911,6 +1194,7 @@ export function SignLanguageTrainer() {
                 <TabsTrigger value="camera">Camera</TabsTrigger>
                 <TabsTrigger value="training">Training</TabsTrigger>
                 <TabsTrigger value="export">Export/Import</TabsTrigger>
+                <TabsTrigger value="python">Python</TabsTrigger>
               </TabsList>
 
               <TabsContent value="camera" className="space-y-4">
@@ -1100,7 +1384,9 @@ export function SignLanguageTrainer() {
                 <div className="flex gap-4">
                   <Button
                     onClick={trainModel}
-                    disabled={gestures.length < 1 || isTraining || !tfReady}
+                    disabled={
+                      (gestures.length < 1 && !usePythonBackend) || isTraining || (!tfReady && !usePythonBackend)
+                    }
                     className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 flex-1"
                   >
                     {isTraining ? (
@@ -1112,7 +1398,11 @@ export function SignLanguageTrainer() {
                       "Train Model"
                     )}
                   </Button>
-                  <Button onClick={saveModel} disabled={!isModelLoaded || isSaving} className="flex-1">
+                  <Button
+                    onClick={saveModel}
+                    disabled={(!isModelLoaded && !usePythonBackend) || isSaving}
+                    className="flex-1"
+                  >
                     {isSaving ? (
                       <>
                         <LoadingSpinner className="mr-2" size="sm" />
@@ -1166,6 +1456,102 @@ export function SignLanguageTrainer() {
                   <Trash2 className="mr-2 h-4 w-4" />
                   Reset All Gestures
                 </Button>
+              </TabsContent>
+
+              <TabsContent value="python" className="space-y-4">
+                <div className="bg-background rounded-lg p-4 border">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-lg font-medium">Python Backend</h3>
+                      <p className="text-sm text-muted-foreground">Use Python for better performance and accuracy</p>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Switch
+                        id="python-backend"
+                        checked={usePythonBackend}
+                        onCheckedChange={togglePythonBackend}
+                        disabled={!pythonBackendAvailable}
+                      />
+                      <Label htmlFor="python-backend">{usePythonBackend ? "Enabled" : "Disabled"}</Label>
+                    </div>
+                  </div>
+
+                  <div className="mt-2">
+                    <div
+                      className={`p-2 rounded-md ${pythonBackendAvailable ? "bg-green-100 dark:bg-green-900/30" : "bg-red-100 dark:bg-red-900/30"}`}
+                    >
+                      <div className="flex items-center">
+                        <Server
+                          className={`h-5 w-5 mr-2 ${pythonBackendAvailable ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}
+                        />
+                        <span
+                          className={
+                            pythonBackendAvailable
+                              ? "text-green-600 dark:text-green-400"
+                              : "text-red-600 dark:text-red-400"
+                          }
+                        >
+                          Python Backend is {pythonBackendAvailable ? "Available" : "Not Available"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {pythonBackendAvailable && (
+                    <div className="mt-4">
+                      <h4 className="font-medium mb-2">Available Python Models</h4>
+                      {pythonModels.length > 0 ? (
+                        <div className="space-y-2 max-h-40 overflow-y-auto">
+                          {pythonModels.map((model) => (
+                            <div
+                              key={model.id}
+                              className={`p-2 rounded-md cursor-pointer ${
+                                selectedPythonModel === model.id
+                                  ? "bg-purple-100 dark:bg-purple-900/30 border-2 border-purple-500"
+                                  : "bg-background hover:bg-muted"
+                              }`}
+                              onClick={() => loadPythonModel(model.id)}
+                            >
+                              <div className="flex justify-between">
+                                <span className="font-medium">{model.name}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {new Date(model.timestamp * 1000).toLocaleString()}
+                                </span>
+                              </div>
+                              <div className="text-xs text-muted-foreground mt-1">
+                                {model.classes.length} gestures: {model.classes.join(", ")}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center text-muted-foreground p-4 bg-muted/30 rounded-md">
+                          No Python models available
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {!pythonBackendAvailable && (
+                    <div className="mt-4 p-4 bg-amber-100 dark:bg-amber-900/30 rounded-md">
+                      <h4 className="font-medium text-amber-800 dark:text-amber-400 mb-2">Setup Instructions</h4>
+                      <ol className="list-decimal list-inside space-y-2 text-sm">
+                        <li>Install Python 3.8+ on your system</li>
+                        <li>
+                          Navigate to the <code className="bg-muted px-1 py-0.5 rounded">python_backend</code> directory
+                        </li>
+                        <li>
+                          Install requirements:{" "}
+                          <code className="bg-muted px-1 py-0.5 rounded">pip install -r requirements.txt</code>
+                        </li>
+                        <li>
+                          Start the server: <code className="bg-muted px-1 py-0.5 rounded">python app.py</code>
+                        </li>
+                        <li>Refresh this page</li>
+                      </ol>
+                    </div>
+                  )}
+                </div>
               </TabsContent>
             </Tabs>
           </div>
@@ -1228,6 +1614,26 @@ export function SignLanguageTrainer() {
           </div>
         </div>
       </CardContent>
+      <CardFooter className="bg-muted/30 p-4">
+        <div className="w-full flex items-center justify-between">
+          <div className="text-sm text-muted-foreground">
+            {usePythonBackend && pythonBackendAvailable ? (
+              <div className="flex items-center">
+                <Server className="h-4 w-4 mr-1 text-green-500" />
+                Using Python Backend
+              </div>
+            ) : (
+              <div className="flex items-center">
+                <Server className="h-4 w-4 mr-1 text-gray-500" />
+                Using JavaScript
+              </div>
+            )}
+          </div>
+          <div className="text-sm">
+            {gestures.length} gestures collected • {gestures.reduce((sum, g) => sum + g.samples, 0)} total samples
+          </div>
+        </div>
+      </CardFooter>
     </Card>
   )
 }
