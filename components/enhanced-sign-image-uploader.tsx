@@ -308,7 +308,7 @@ export function EnhancedSignImageUploader() {
       return
     }
 
-    if (!previewUrl || !fileInputRef.current?.files?.[0]) {
+    if (!fileInputRef.current?.files?.[0]) {
       toast({
         title: "No Image Selected",
         description: "Please select an image to upload.",
@@ -322,30 +322,20 @@ export function EnhancedSignImageUploader() {
 
     try {
       const file = fileInputRef.current.files[0]
-
-      // Read file as data URL (base64)
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(reader.result as string)
-        reader.onerror = reject
-        reader.readAsDataURL(file)
-      })
-
-      // Generate a unique ID for the image
       const imageId = Date.now().toString()
 
-      // Create a URL for the image (using the data URL directly)
-      const imageUrl = dataUrl
+      // Create form data
+      const formData = new FormData()
+      formData.append("file", file)
+      formData.append("word", word.trim())
+      formData.append("id", imageId)
 
-      // Add to uploaded images
-      const newImage: UploadedImage = {
-        id: imageId,
-        word: word.trim(),
-        url: imageUrl,
-        dataUrl: dataUrl,
-        timestamp: new Date().toISOString(),
-        category: selectedCategory,
-        tags: selectedTags,
+      if (selectedCategory) {
+        formData.append("category", selectedCategory)
+      }
+
+      if (selectedTags.length > 0) {
+        formData.append("tags", JSON.stringify(selectedTags))
       }
 
       // Simulate upload progress
@@ -358,71 +348,70 @@ export function EnhancedSignImageUploader() {
         setUploadProgress(progress)
       }, 100)
 
-      const updatedImages = [...uploadedImages, newImage]
-      setUploadedImages(updatedImages)
+      // Upload to our API
+      const response = await fetch("/api/upload-image", {
+        method: "POST",
+        body: formData,
+      })
 
-      // If direct upload to GitHub is enabled, skip localStorage and model manager
-      if (directUploadToGithub) {
-        // Check if we have GitHub settings
-        if (!githubSettings.token) {
-          setShowGitHubDialog(true)
-          // We'll continue the upload after the dialog is closed
-        } else {
-          await saveToGitHubDirectly([newImage])
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || "Upload failed")
+      }
+
+      const result = await response.json()
+
+      if (result.success) {
+        // Add to uploaded images
+        const newImage: UploadedImage = {
+          id: imageId,
+          word: word.trim(),
+          url: result.url,
+          timestamp: new Date().toISOString(),
+          category: selectedCategory,
+          tags: selectedTags,
         }
-      } else {
+
+        const updatedImages = [...uploadedImages, newImage]
+        setUploadedImages(updatedImages)
+
         // Try to store in localStorage for persistence
         try {
           localStorage.setItem("signLanguageImages", JSON.stringify(updatedImages))
-
-          // Add to model manager for slideshow
-          addImageToModelManager(newImage.word, newImage.url, newImage.category, newImage.tags)
         } catch (error) {
           console.error("Error saving to localStorage:", error)
           setStorageQuotaExceeded(true)
-          setDirectUploadToGithub(true)
+        }
 
-          // Notify user about storage quota
-          toast({
-            title: "Storage Limit Reached",
-            description: "Local storage limit reached. Switching to direct GitHub upload.",
-            variant: "warning",
-          })
+        // Complete the progress bar
+        setUploadProgress(100)
+        setTimeout(() => {
+          clearInterval(progressInterval)
 
-          // Show GitHub settings dialog if token is missing
-          if (!githubSettings.token) {
-            setShowGitHubDialog(true)
-          } else {
-            await saveToGitHubDirectly([newImage])
+          // Reset form
+          setWord("")
+          setPreviewUrl(null)
+          setSelectedCategory("")
+          setSelectedTags([])
+          setUploadProgress(0)
+          if (fileInputRef.current) {
+            fileInputRef.current.value = ""
           }
-        }
+
+          toast({
+            title: "Upload Successful",
+            description: `Sign image for "${word}" has been uploaded.`,
+          })
+        }, 500)
+      } else {
+        throw new Error(result.error || "Upload failed")
       }
-
-      // Complete the progress bar
-      setUploadProgress(100)
-      setTimeout(() => {
-        clearInterval(progressInterval)
-
-        // Reset form
-        setWord("")
-        setPreviewUrl(null)
-        setSelectedCategory("")
-        setSelectedTags([])
-        setUploadProgress(0)
-        if (fileInputRef.current) {
-          fileInputRef.current.value = ""
-        }
-
-        toast({
-          title: "Upload Successful",
-          description: `Sign image for "${word}" has been uploaded.`,
-        })
-      }, 500)
     } catch (error) {
       console.error("Upload error:", error)
       toast({
         title: "Upload Failed",
-        description: "There was an error uploading your image. Please try again.",
+        description:
+          error instanceof Error ? error.message : "There was an error uploading your image. Please try again.",
         variant: "destructive",
       })
     } finally {
@@ -960,7 +949,7 @@ export function EnhancedSignImageUploader() {
                       <SelectValue placeholder="Select a category" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">None</SelectItem>
+                      <SelectItem value="NONE">None</SelectItem>
                       {categories.map((category) => (
                         <SelectItem key={category.id} value={category.id}>
                           {category.name}
@@ -1611,7 +1600,7 @@ export function EnhancedSignImageUploader() {
                         <SelectValue placeholder="Select a category" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">None</SelectItem>
+                        <SelectItem value="NONE">None</SelectItem>
                         {categories.map((category) => (
                           <SelectItem key={category.id} value={category.id}>
                             {category.name}

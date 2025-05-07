@@ -9,7 +9,7 @@ export interface GestureData {
 // This is a singleton class to manage gesture models
 class ModelManager {
   private gestures: GestureData[] = []
-  private signImages: { word: string; url: string; id: string }[] = []
+  private signImages: { word: string; url: string; id: string; category?: string; tags?: string[] }[] = []
   private githubConfig: { owner: string; repo: string; branch: string; token?: string } | null = null
   private isInitialized = false
   private storageQuotaExceeded = false
@@ -164,15 +164,33 @@ class ModelManager {
   }
 
   // Add a sign image
-  public addSignImage(word: string, url: string, id: string = Date.now().toString()) {
+  public addSignImage(
+    word: string,
+    url: string,
+    id: string = Date.now().toString(),
+    category?: string,
+    tags?: string[],
+  ) {
     const existingIndex = this.signImages.findIndex((img) => img.id === id)
 
     if (existingIndex >= 0) {
       // Update existing image
-      this.signImages[existingIndex] = { word, url, id }
+      this.signImages[existingIndex] = {
+        word,
+        url,
+        id,
+        category,
+        tags,
+      }
     } else {
       // Add new image
-      this.signImages.push({ word, url, id })
+      this.signImages.push({
+        word,
+        url,
+        id,
+        category,
+        tags,
+      })
     }
 
     // Also add to gesture data for slideshow
@@ -659,6 +677,16 @@ class ModelManager {
       this.githubConfig.token &&
       this.githubConfig.token.trim() !== ""
     )
+  }
+
+  // Check if GitHub is properly configured
+  public isGitHubConfigured(): boolean {
+    return this.isGitHubConfigValid()
+  }
+
+  // Get GitHub configuration (for use in other services)
+  public getGitHubConfig() {
+    return this.githubConfig
   }
 }
 

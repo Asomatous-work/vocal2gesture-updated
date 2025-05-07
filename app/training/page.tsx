@@ -1,10 +1,6 @@
-import { TrainingClient } from "./training-client"
-
-export const metadata = {
-  title: "Gesture Training | Vocal2Gestures",
-  description: "Train custom hand gestures using LSTM neural networks for improved sign language recognition",
-}
+// This file is intentionally left empty as we're removing the training page
+import { redirect } from "next/navigation"
 
 export default function TrainingPage() {
-  return <TrainingClient />
+  redirect("/sign-to-speech")
 }

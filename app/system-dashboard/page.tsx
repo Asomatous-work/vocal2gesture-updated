@@ -10,6 +10,7 @@ import { Github, Database, HardDrive, RefreshCw, CheckCircle, XCircle, AlertTria
 import { modelManager } from "@/lib/model-manager"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
 import { Progress } from "@/components/ui/progress"
+import { BackButton } from "@/components/back-button"
 
 interface ServiceStatus {
   name: string
@@ -334,6 +335,10 @@ export default function SystemDashboardPage() {
 
   return (
     <div className="container mx-auto px-4 py-8 md:py-12">
+      <div className="mb-4">
+        <BackButton />
+      </div>
+
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}

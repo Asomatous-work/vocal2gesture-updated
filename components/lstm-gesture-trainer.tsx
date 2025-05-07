@@ -893,7 +893,7 @@ export function LSTMGestureTrainer() {
   }
 
   // Save the trained model to GitHub - using the existing GitHub config
-  const saveModelToGitHub = async () => {
+  const saveModelToGitHubAndLocal = async () => {
     if (!lstmModelRef.current || !isModelLoaded) {
       toast({
         title: "No Model Available",
@@ -904,10 +904,30 @@ export function LSTMGestureTrainer() {
     }
 
     setIsSavingToGitHub(true)
-    addLog("info", "Preparing to save LSTM model to GitHub...")
+    addLog("info", "Preparing to save LSTM model...")
 
     try {
-      // Export model data
+      // Generate a unique model ID
+      const modelId = `lstm_model_${Date.now()}`
+
+      // Step 1: Save to localStorage
+      await lstmModelRef.current.saveToLocalStorage(modelId)
+
+      // Save model metadata
+      const savedModels = JSON.parse(localStorage.getItem("savedLSTMModels") || "[]")
+      savedModels.push({
+        id: modelId,
+        name: `LSTM Model ${savedModels.length + 1}`,
+        gestures: gestures.map((g) => g.name),
+        accuracy: modelAccuracy,
+        timestamp: new Date().toISOString(),
+      })
+      localStorage.setItem("savedLSTMModels", JSON.stringify(savedModels))
+
+      // Set as current model
+      localStorage.setItem("currentLSTMModel", modelId)
+
+      // Step 2: Export model data for GitHub
       const modelData = await lstmModelRef.current.exportForGitHub()
 
       // Save to model manager
@@ -918,27 +938,34 @@ export function LSTMGestureTrainer() {
       // Save LSTM model data
       localStorage.setItem("lstm_model_data", JSON.stringify(modelData))
 
-      // Save to GitHub using the existing GitHub configuration
-      const saved = await modelManager.saveToGitHub()
-
-      if (saved) {
-        toast({
-          title: "Model Saved to GitHub",
-          description: "Your LSTM model has been saved to GitHub for cross-device usage.",
-        })
-        addLog("success", "LSTM model saved to GitHub successfully")
-      } else {
-        throw new Error("Failed to save to GitHub")
+      // Step 3: Save to GitHub if configured
+      let githubSaved = false
+      if (modelManager.isGitHubConfigured()) {
+        try {
+          githubSaved = await modelManager.saveToGitHub()
+        } catch (githubError) {
+          console.error("GitHub save error:", githubError)
+          addLog("warning", `GitHub save failed: ${githubError.message}. Model is still saved locally.`)
+          // Continue even if GitHub save fails
+        }
       }
-    } catch (error) {
-      console.error("Error saving model to GitHub:", error)
+
       toast({
-        title: "GitHub Save Error",
-        description: "There was an error saving your model to GitHub.",
+        title: "Model Saved",
+        description: `Your LSTM model has been saved ${githubSaved ? "to GitHub and " : ""}to local storage.`,
+      })
+
+      setIsModelLoaded(true)
+      addLog("success", `LSTM model saved successfully with ID: ${modelId}`)
+    } catch (error) {
+      console.error("Error saving model:", error)
+      toast({
+        title: "Save Error",
+        description: "There was an error saving your model.",
         variant: "destructive",
       })
 
-      addLog("error", `Failed to save model to GitHub: ${error}`)
+      addLog("error", `Failed to save model: ${error}`)
     } finally {
       setIsSavingToGitHub(false)
     }
@@ -1333,7 +1360,11 @@ export function LSTMGestureTrainer() {
                       </>
                     )}
                   </Button>
-                  <Button onClick={saveModelToGitHub} disabled={!isModelLoaded || isSavingToGitHub} className="flex-1">
+                  <Button
+                    onClick={saveModelToGitHubAndLocal}
+                    disabled={!isModelLoaded || isSavingToGitHub}
+                    className="flex-1"
+                  >
                     {isSavingToGitHub ? (
                       <>
                         <RefreshCw className="mr-2 h-4 w-4 animate-spin" />

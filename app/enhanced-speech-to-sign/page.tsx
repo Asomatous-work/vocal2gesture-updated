@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { BackButton } from "@/components/back-button"
 
 interface TranscriptEntry {
   id: string
@@ -305,6 +306,10 @@ export default function EnhancedSpeechToSignPage() {
 
   return (
     <div className="container mx-auto px-4 py-8 md:py-12">
+      <div className="mb-4">
+        <BackButton />
+      </div>
+
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -313,7 +318,7 @@ export default function EnhancedSpeechToSignPage() {
       >
         <div className="flex items-center justify-center mb-4">
           <Image src="/images/gesture-logo.png" alt="Vocal2Gestures Logo" width={60} height={60} className="mr-3" />
-          <h2 className="text-2xl md:text-4xl font-bold">Enhanced Speech to Sign Translator</h2>
+          <h2 className="text-2xl md:text-4xl font-bold">Speech to Sign Translator</h2>
         </div>
         <p className="text-base md:text-lg text-muted-foreground max-w-2xl mx-auto">
           Speak or type text to see it translated into sign language gestures
@@ -531,7 +536,6 @@ export default function EnhancedSpeechToSignPage() {
         </motion.div>
       </div>
 
-      {/* Add API route for Blob status check */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
